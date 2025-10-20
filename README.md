@@ -19,9 +19,13 @@ pip install -r requirements.txt
 
 ## 실행
 
+개발 서버(Uvicorn) 실행:
+
 ```bash
-python -m app.main
+uvicorn app.main:app --reload --port 8000
 ```
+
+API 문서: `http://127.0.0.1:8000/docs`
 
 ## 프로젝트 구조
 
@@ -29,7 +33,7 @@ python -m app.main
 caring-voice/
 ├── app/
 │   ├── __init__.py
-│   └── main.py          # 메인 엔트리 포인트
+│   └── main.py          # FastAPI 엔트리 포인트 및 엔드포인트
 ├── .gitignore
 ├── README.md
 ├── requirements.txt
