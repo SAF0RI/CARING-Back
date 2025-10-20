@@ -1,0 +1,20 @@
+# <type>(<scope>): <subject>
+#
+# <body>
+#
+# <footer>
+
+# Type: feat, fix, docs, style, refactor, test, chore
+# Scope: 기능 영역 (예: auth, api, ui)
+# Subject: 50자 이내로 간결하게
+# Body: 72자마다 줄바꿈, 왜 변경했는지 설명
+# Footer: Breaking changes, Issues 참조
+
+# 예시:
+# feat(auth): add user login functionality
+#
+# - Add login form validation
+# - Implement JWT token generation
+# - Add password hashing with bcrypt
+#
+# Closes #123
