@@ -27,6 +27,20 @@ uvicorn app.main:app --reload --port 8000
 
 API 문서: `http://127.0.0.1:8000/docs`
 
+## 환경 변수 설정
+
+프로젝트 루트에 `.env` 파일을 생성하고 다음 값을 채우세요. 예시는 `.env.example` 참고.
+
+```
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+AWS_REGION=ap-northeast-2
+S3_BUCKET_NAME=your-bucket
+S3_PREFIX=voices
+```
+
+`.env`는 `app/__init__.py`에서 자동 로드됩니다.
+
 ## 프로젝트 구조
 
 ```

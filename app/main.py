@@ -1,6 +1,10 @@
-from fastapi import FastAPI, UploadFile, File
+import os
+from typing import Optional
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.responses import JSONResponse
 from typing import List
+from .s3_service import upload_fileobj, list_bucket_objects
+from .constants import VOICE_BASE_PREFIX, DEFAULT_UPLOAD_FOLDER
 
 app = FastAPI(title="Caring API")
 
@@ -11,24 +15,40 @@ def health():
 
 # POST : upload voice
 @app.post("/voices/upload")
-async def upload_voice(file: UploadFile = File(...)):
-    # 내부 로직은 생략, 업로드된 파일 메타만 반환
-    return {
-        "filename": file.filename,
-        "content_type": file.content_type,
-        "detail": "uploaded (stub)"
-    }
+async def upload_voice(
+    file: UploadFile = File(...),
+    folder: Optional[str] = Form(default=None),  # 예: "raw" 또는 "user123/session1"
+):
+    bucket = os.getenv("S3_BUCKET_NAME")
+    if not bucket:
+        raise HTTPException(status_code=500, detail="S3_BUCKET_NAME not configured")
+
+    # 키: optional prefix/YYYYMMDD_originalname
+    base_prefix = VOICE_BASE_PREFIX.rstrip("/")
+    effective_prefix = f"{base_prefix}/{folder or DEFAULT_UPLOAD_FOLDER}".rstrip("/")
+    key = f"{effective_prefix}/{file.filename}"
+
+    # 파일을 S3에 업로드
+    upload_fileobj(bucket=bucket, key=key, fileobj=file.file)
+
+    # DB가 없으므로, 버킷의 파일 목록을 반환
+    names = list_bucket_objects(bucket=bucket, prefix=effective_prefix)
+    return {"uploaded": key, "files": names}
 
 
 # GET : query my voice histories
 @app.get("/voices")
-async def list_voices(skip: int = 0, limit: int = 20):
-    # 내부 로직은 생략, 더미 목록 반환
-    items = [
-        {"voice_id": f"v_{i}", "filename": f"sample_{i}.wav", "status": "processed"}
-        for i in range(skip, min(skip + limit, skip + 20))
-    ]
-    return {"items": items, "count": len(items), "next": skip + len(items)}
+async def list_voices(skip: int = 0, limit: int = 50, folder: Optional[str] = None):
+    bucket = os.getenv("S3_BUCKET_NAME")
+    if not bucket:
+        raise HTTPException(status_code=500, detail="S3_BUCKET_NAME not configured")
+    base_prefix = VOICE_BASE_PREFIX.rstrip("/")
+    effective_prefix = f"{base_prefix}/{folder or DEFAULT_UPLOAD_FOLDER}".rstrip("/")
+
+    keys = list_bucket_objects(bucket=bucket, prefix=effective_prefix)
+    # 페이징 비슷하게 slice만 적용
+    sliced = keys[skip: skip + limit]
+    return {"items": sliced, "count": len(sliced), "next": skip + len(sliced)}
 
 
 # GET : query specific voice & show result
