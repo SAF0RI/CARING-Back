@@ -1,0 +1,51 @@
+# Caring Voice
+
+음성 관련 애플리케이션 프로젝트입니다.
+
+## 요구사항
+
+- Python 3.11+
+
+## 설치
+
+```bash
+# 가상환경 생성 및 활성화
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+
+# 의존성 설치
+pip install -r requirements.txt
+```
+
+## 실행
+
+```bash
+python -m app.main
+```
+
+## 프로젝트 구조
+
+```
+caring-voice/
+├── app/
+│   ├── __init__.py
+│   └── main.py          # 메인 엔트리 포인트
+├── .gitignore
+├── README.md
+├── requirements.txt
+└── LICENSE
+```
+
+## 개발
+
+프로젝트 개발에 참여하시려면:
+
+1. 이 저장소를 포크하세요
+2. 새로운 브랜치를 생성하세요 (`git checkout -b feature/새기능`)
+3. 변경사항을 커밋하세요 (`git commit -am '새기능 추가'`)
+4. 브랜치에 푸시하세요 (`git push origin feature/새기능`)
+5. Pull Request를 생성하세요
+
+## 라이선스
+
+이 프로젝트는 MIT 라이선스 하에 배포됩니다. 자세한 내용은 [LICENSE](LICENSE) 파일을 참조하세요.
