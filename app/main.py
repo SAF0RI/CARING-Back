@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 from typing import List
 from .s3_service import upload_fileobj, list_bucket_objects
 from .constants import VOICE_BASE_PREFIX, DEFAULT_UPLOAD_FOLDER
+from .emotion_service import analyze_voice_emotion
 
 app = FastAPI(title="Caring API")
 
@@ -31,9 +32,16 @@ async def upload_voice(
     # 파일을 S3에 업로드
     upload_fileobj(bucket=bucket, key=key, fileobj=file.file)
 
+    # 감정 분석 수행
+    emotion_result = analyze_voice_emotion(file)
+
     # DB가 없으므로, 버킷의 파일 목록을 반환
     names = list_bucket_objects(bucket=bucket, prefix=effective_prefix)
-    return {"uploaded": key, "files": names}
+    return {
+        "uploaded": key, 
+        "files": names,
+        "emotion_analysis": emotion_result
+    }
 
 
 # GET : query my voice histories
@@ -63,3 +71,11 @@ async def get_voice(voice_id: str):
         "analysis": {"pitch_mean": 220.5, "energy": 0.82}
     }
     return JSONResponse(content=result)
+
+
+# POST : analyze emotion from uploaded voice file
+@app.post("/voices/analyze-emotion")
+async def analyze_emotion(file: UploadFile = File(...)):
+    """음성 파일의 감정을 분석합니다."""
+    emotion_result = analyze_voice_emotion(file)
+    return emotion_result
