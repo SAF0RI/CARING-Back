@@ -6,6 +6,7 @@ from typing import List
 from .s3_service import upload_fileobj, list_bucket_objects
 from .constants import VOICE_BASE_PREFIX, DEFAULT_UPLOAD_FOLDER
 from .emotion_service import analyze_voice_emotion
+from .stt_service import transcribe_voice
 
 app = FastAPI(title="Caring API")
 
@@ -79,3 +80,49 @@ async def analyze_emotion(file: UploadFile = File(...)):
     """음성 파일의 감정을 분석합니다."""
     emotion_result = analyze_voice_emotion(file)
     return emotion_result
+
+
+# POST : convert speech to text using Google STT
+@app.post("/voices/transcribe")
+async def transcribe_speech(
+    file: UploadFile = File(...),
+    language_code: str = "ko-KR"
+):
+    """음성 파일을 텍스트로 변환합니다."""
+    stt_result = transcribe_voice(file, language_code)
+    return stt_result
+
+
+# POST : upload voice with both emotion analysis and STT
+@app.post("/voices/upload-with-analysis")
+async def upload_voice_with_analysis(
+    file: UploadFile = File(...),
+    folder: Optional[str] = Form(default=None),
+    language_code: str = Form(default="ko-KR")
+):
+    """음성 파일을 업로드하고 감정 분석과 STT를 모두 수행합니다."""
+    bucket = os.getenv("S3_BUCKET_NAME")
+    if not bucket:
+        raise HTTPException(status_code=500, detail="S3_BUCKET_NAME not configured")
+
+    # S3 업로드
+    base_prefix = VOICE_BASE_PREFIX.rstrip("/")
+    effective_prefix = f"{base_prefix}/{folder or DEFAULT_UPLOAD_FOLDER}".rstrip("/")
+    key = f"{effective_prefix}/{file.filename}"
+    upload_fileobj(bucket=bucket, key=key, fileobj=file.file)
+
+    # 감정 분석
+    emotion_result = analyze_voice_emotion(file)
+    
+    # STT 변환
+    stt_result = transcribe_voice(file, language_code)
+
+    # 파일 목록 조회
+    names = list_bucket_objects(bucket=bucket, prefix=effective_prefix)
+    
+    return {
+        "uploaded": key,
+        "files": names,
+        "emotion_analysis": emotion_result,
+        "transcription": stt_result
+    }
