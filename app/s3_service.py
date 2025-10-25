@@ -7,13 +7,19 @@ from botocore.client import Config  # type: ignore
 
 def get_s3_client():
     region = os.getenv("AWS_REGION", "ap-northeast-2")
-    return boto3.client(
-        "s3",
-        region_name=region,
-        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
-        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
-        config=Config(signature_version="s3v4"),
-    )
+    kwargs = {
+        "region_name": region,
+        "config": Config(signature_version="s3v4"),
+    }
+    access_key = os.getenv("AWS_ACCESS_KEY_ID")
+    secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
+    session_token = os.getenv("AWS_SESSION_TOKEN")
+    if access_key and secret_key:
+        kwargs["aws_access_key_id"] = access_key
+        kwargs["aws_secret_access_key"] = secret_key
+        if session_token:
+            kwargs["aws_session_token"] = session_token
+    return boto3.client("s3", **kwargs)
 
 
 def upload_fileobj(bucket: str, key: str, fileobj) -> str:

@@ -1,4 +1,5 @@
 import io
+import os
 import tempfile
 from typing import Dict, Any
 import librosa
@@ -102,10 +103,9 @@ class EmotionAnalyzer:
         finally:
             # 임시 파일 정리
             try:
-                import os
                 os.unlink(tmp_file_path)
-            except:
-                pass
+            except OSError as e:
+                print(f"임시 파일 삭제 실패: {tmp_file_path}, 오류: {e}")
 
 
 # 전역 인스턴스

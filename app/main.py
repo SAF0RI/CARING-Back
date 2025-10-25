@@ -28,10 +28,17 @@ async def upload_voice(
     # 키: optional prefix/YYYYMMDD_originalname
     base_prefix = VOICE_BASE_PREFIX.rstrip("/")
     effective_prefix = f"{base_prefix}/{folder or DEFAULT_UPLOAD_FOLDER}".rstrip("/")
-    key = f"{effective_prefix}/{file.filename}"
+    filename = os.path.basename(file.filename or "upload.wav")
+    key = f"{effective_prefix}/{filename}"
 
     # 파일을 S3에 업로드
-    upload_fileobj(bucket=bucket, key=key, fileobj=file.file)
+    # Content-Type 저장
+    upload_fileobj(bucket=bucket, key=key, fileobj=file.file, content_type=file.content_type)
+    # 이후 소비자를 위해 포인터 리셋
+    try:
+        file.file.seek(0)
+    except Exception:
+        pass
 
     # 감정 분석 수행
     emotion_result = analyze_voice_emotion(file)
@@ -108,11 +115,20 @@ async def upload_voice_with_analysis(
     # S3 업로드
     base_prefix = VOICE_BASE_PREFIX.rstrip("/")
     effective_prefix = f"{base_prefix}/{folder or DEFAULT_UPLOAD_FOLDER}".rstrip("/")
-    key = f"{effective_prefix}/{file.filename}"
-    upload_fileobj(bucket=bucket, key=key, fileobj=file.file)
+    filename = os.path.basename(file.filename or "upload.wav")
+    key = f"{effective_prefix}/{filename}"
+    upload_fileobj(bucket=bucket, key=key, fileobj=file.file, content_type=file.content_type)
+    try:
+        file.file.seek(0)
+    except Exception:
+        pass
 
     # 감정 분석
     emotion_result = analyze_voice_emotion(file)
+    try:
+        file.file.seek(0)
+    except Exception:
+        pass
     
     # STT 변환
     stt_result = transcribe_voice(file, language_code)
