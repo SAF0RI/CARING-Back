@@ -39,7 +39,27 @@ S3_BUCKET_NAME=your-bucket
 S3_PREFIX=voices
 ```
 
+### Google Cloud 설정
+```
+# 서비스 계정 키 파일 경로 설정 (Speech-to-Text, Natural Language API 공통)
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/your/service-account-key.json
+```
+
 `.env`는 `app/__init__.py`에서 자동 로드됩니다.
+
+## API 엔드포인트
+
+### 음성 관련 API
+- `POST /voices/upload`: 음성 파일 업로드 + STT 변환
+- `POST /voices/transcribe`: STT 변환만
+- `POST /voices/{voice_key}/analyze-emotion`: S3 파일 감정 분석
+- `GET /voices`: 파일 목록 조회
+
+### 텍스트 분석 API (Google Natural Language)
+- `POST /nlp/sentiment`: 텍스트 감정 분석
+- `POST /nlp/entities`: 엔티티 추출
+- `POST /nlp/syntax`: 구문 분석
+- `POST /nlp/analyze`: 종합 텍스트 분석
 
 ## 프로젝트 구조
 

@@ -7,6 +7,7 @@ from .s3_service import upload_fileobj, list_bucket_objects
 from .constants import VOICE_BASE_PREFIX, DEFAULT_UPLOAD_FOLDER
 from .emotion_service import analyze_voice_emotion
 from .stt_service import transcribe_voice
+from .nlp_service import analyze_text_sentiment, analyze_text_entities, analyze_text_syntax
 
 app = FastAPI(title="Caring API")
 
@@ -142,3 +143,56 @@ async def transcribe_speech(
     """음성 파일을 텍스트로 변환합니다."""
     stt_result = transcribe_voice(file, language_code)
     return stt_result
+
+
+# POST : analyze text sentiment using Google NLP
+@app.post("/nlp/sentiment")
+async def analyze_sentiment(
+    text: str,
+    language_code: str = "ko"
+):
+    """텍스트의 감정을 분석합니다."""
+    sentiment_result = analyze_text_sentiment(text, language_code)
+    return sentiment_result
+
+
+# POST : extract entities from text using Google NLP
+@app.post("/nlp/entities")
+async def extract_entities(
+    text: str,
+    language_code: str = "ko"
+):
+    """텍스트에서 엔티티를 추출합니다."""
+    entities_result = analyze_text_entities(text, language_code)
+    return entities_result
+
+
+# POST : analyze text syntax using Google NLP
+@app.post("/nlp/syntax")
+async def analyze_syntax(
+    text: str,
+    language_code: str = "ko"
+):
+    """텍스트의 구문을 분석합니다."""
+    syntax_result = analyze_text_syntax(text, language_code)
+    return syntax_result
+
+
+# POST : comprehensive text analysis using Google NLP
+@app.post("/nlp/analyze")
+async def analyze_text_comprehensive(
+    text: str,
+    language_code: str = "ko"
+):
+    """텍스트의 감정, 엔티티, 구문을 종합 분석합니다."""
+    sentiment_result = analyze_text_sentiment(text, language_code)
+    entities_result = analyze_text_entities(text, language_code)
+    syntax_result = analyze_text_syntax(text, language_code)
+    
+    return {
+        "text": text,
+        "language_code": language_code,
+        "sentiment_analysis": sentiment_result,
+        "entity_analysis": entities_result,
+        "syntax_analysis": syntax_result
+    }
