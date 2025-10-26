@@ -112,7 +112,7 @@ class GoogleSTTService:
             try:
                 os.unlink(tmp_file_path)
             except OSError as e:
-+                print("임시 파일 삭제 실패: %s", tmp_file_path, exc_info=True)
+                print(f"임시 파일 삭제 실패: {tmp_file_path}, 오류: {e}")
 
 
 # 전역 인스턴스
