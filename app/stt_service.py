@@ -5,6 +5,7 @@ from typing import Dict, Any, Optional
 from google.cloud import speech
 from google.oauth2 import service_account
 import librosa
+import numpy as np
 
 
 class GoogleSTTService:
@@ -55,6 +56,7 @@ class GoogleSTTService:
             # 임시 파일로 저장
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
                 content = audio_file.file.read()
+                audio_file.file.seek(0)
                 tmp_file.write(content)
                 tmp_file_path = tmp_file.name
             
@@ -62,6 +64,7 @@ class GoogleSTTService:
             audio_data, sample_rate = librosa.load(tmp_file_path, sr=16000)
             
             # 오디오 데이터를 bytes로 변환
+            audio_data = np.clip(audio_data, -1.0, 1.0)
             audio_bytes = (audio_data * 32767).astype('int16').tobytes()
             
             # Google Cloud Speech-to-Text 요청 구성
