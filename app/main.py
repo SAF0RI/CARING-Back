@@ -8,8 +8,64 @@ from .constants import VOICE_BASE_PREFIX, DEFAULT_UPLOAD_FOLDER
 from .emotion_service import analyze_voice_emotion
 from .stt_service import transcribe_voice
 from .nlp_service import analyze_text_sentiment, analyze_text_entities, analyze_text_syntax
+from .database import create_tables, engine
+from .models import Base
 
 app = FastAPI(title="Caring API")
+
+
+# 서버 시작시 한 번만 실행하도록 모듈 레벨에서 체크
+import sys
+_startup_checked = False
+
+@app.on_event("startup")
+async def startup_event():
+    """서버 시작 시 테이블 자동 생성 (없는 테이블만 생성)"""
+    global _startup_checked
+    
+    # 이미 체크했다면 스킵
+    if _startup_checked:
+        return
+    
+    _startup_checked = True
+    
+    try:
+        print("📊 데이터베이스 테이블 확인 중...")
+        
+        from sqlalchemy import inspect
+        inspector = inspect(engine)
+        existing_tables = inspector.get_table_names()
+        
+        # 모든 모델의 테이블명 가져오기
+        all_tables = set(Base.metadata.tables.keys())
+        
+        # 존재하지 않는 테이블만 생성
+        missing_tables = all_tables - set(existing_tables)
+        
+        if missing_tables:
+            print(f"🔨 테이블 생성 중: {', '.join(missing_tables)}")
+            # Foreign Key 의존성을 고려한 테이블 생성 순서 정의
+            table_order = ['user', 'voice', 'voice_content', 'voice_analyze']
+            
+            for table_name in table_order:
+                if table_name in missing_tables:
+                    table = Base.metadata.tables[table_name]
+                    table.create(bind=engine, checkfirst=True)
+            
+            # 정의되지 않은 다른 테이블들도 생성
+            other_tables = missing_tables - set(table_order)
+            if other_tables:
+                for table_name in other_tables:
+                    table = Base.metadata.tables[table_name]
+                    table.create(bind=engine, checkfirst=True)
+            
+            print("✅ 테이블 생성 완료!")
+        else:
+            print("✅ 모든 테이블이 존재합니다.")
+            
+    except Exception as e:
+        print(f"⚠️  데이터베이스 연결 실패: {e}")
+        print("💡 데이터베이스 서버가 실행 중인지 확인해주세요.")
 
 @app.get("/health")
 def health():

@@ -1,4 +1,5 @@
 from sqlalchemy import Column, BigInteger, String, Date, DateTime, Integer, SmallInteger, Text, ForeignKey, CheckConstraint, UniqueConstraint, Index
+from sqlalchemy.dialects.mysql import VARCHAR
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from .database import Base
@@ -31,7 +32,7 @@ class Voice(Base):
     __tablename__ = "voice"
     
     voice_id = Column(BigInteger, primary_key=True, autoincrement=True)
-    voice_key = Column(String(1024), nullable=False, unique=True)  # S3 key
+    voice_key = Column(String(1024), nullable=False)  # S3 key
     voice_name = Column(String(255), nullable=False)  # 제목
     duration_ms = Column(Integer, nullable=False)  # 길이(ms)
     sample_rate = Column(Integer, nullable=True)  # Hz
@@ -47,6 +48,8 @@ class Voice(Base):
     # 인덱스
     __table_args__ = (
         Index('idx_voice_user_created', 'user_id', 'created_at'),
+        # voice_key의 일부(255자)만 인덱싱하여 길이 제한 문제 해결
+        Index('idx_voice_key', 'voice_key', mysql_length=255),
     )
 
 
