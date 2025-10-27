@@ -166,14 +166,13 @@ async def sign_in(request: SigninRequest, role: str):
 @app.post("/users/voices", response_model=UserVoiceUploadResponse)
 async def upload_user_voice(
     file: UploadFile = File(...),
-    username: str = Form(...),
-    language_code: str = Form(default="ko-KR")
+    username: str = Form(...)
 ):
-    """사용자 음성 파일 업로드 (S3 + DB 저장 + STT)"""
+    """사용자 음성 파일 업로드 (S3 + DB 저장)"""
     db = next(get_db())
     voice_service = get_voice_service(db)
     
-    result = await voice_service.upload_user_voice(file, username, language_code)
+    result = await voice_service.upload_user_voice(file, username)
     
     if result["success"]:
         return UserVoiceUploadResponse(
