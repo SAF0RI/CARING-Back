@@ -19,6 +19,8 @@ pip install -r requirements.txt
 
 ## 실행
 
+### 로컬 개발 환경
+
 개발 서버(Uvicorn) 실행:
 
 ```bash
@@ -26,6 +28,46 @@ uvicorn app.main:app --reload --port 8000
 ```
 
 API 문서: `http://127.0.0.1:8000/docs`
+
+### Docker를 사용한 실행
+
+#### 1. 환경 변수 설정
+`.env` 파일에 AWS RDS 및 필요한 설정을 추가하세요:
+
+```env
+# 데이터베이스 (AWS RDS)
+DB_HOST=your-rds-endpoint.region.rds.amazonaws.com
+DB_PORT=3306
+DB_USER=admin
+DB_PASSWORD=your_password
+DB_NAME=caring_voice
+
+# AWS 설정
+AWS_ACCESS_KEY_ID=your_access_key
+AWS_SECRET_ACCESS_KEY=your_secret_key
+AWS_REGION=ap-northeast-2
+S3_BUCKET_NAME=your-bucket-name
+
+# Google Cloud 설정
+GOOGLE_APPLICATION_CREDENTIALS=/app/credentials/google-credentials.json
+```
+
+#### 2. Docker Compose로 서버 실행
+
+```bash
+# 빌드 및 실행
+docker-compose up -d
+
+# 로그 확인
+docker-compose logs -f
+
+# 중지
+docker-compose down
+```
+
+#### 3. API 접근
+- 로컬: `http://localhost:8000`
+- API 문서: `http://localhost:8000/docs`
 
 ## 데이터베이스 마이그레이션
 
