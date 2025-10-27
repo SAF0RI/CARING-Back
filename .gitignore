@@ -143,3 +143,16 @@ dmypy.json
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Server logs and runtime files
+server.log
+nohup.out
+*.log
+
+# Local deployment scripts (optional - comment out if you want to commit these)
+restart.sh
+restart_systemd.sh
+SERVERS.md
+
+*.json
+
