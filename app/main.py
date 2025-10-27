@@ -8,8 +8,15 @@ from .constants import VOICE_BASE_PREFIX, DEFAULT_UPLOAD_FOLDER
 from .emotion_service import analyze_voice_emotion
 from .stt_service import transcribe_voice
 from .nlp_service import analyze_text_sentiment, analyze_text_entities, analyze_text_syntax
-from .database import create_tables, engine
+from .database import create_tables, engine, get_db
 from .models import Base
+from .auth_service import get_auth_service
+from .dto import (
+    SignupRequest, SignupResponse,
+    VoiceUploadResponse, VoiceListResponse, VoiceDetailResponse,
+    EmotionAnalysisResponse, TranscribeResponse,
+    SentimentResponse, EntitiesResponse, SyntaxResponse, ComprehensiveAnalysisResponse
+)
 
 app = FastAPI(title="Caring API")
 
@@ -70,6 +77,34 @@ async def startup_event():
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+# POST : 회원가입
+@app.post("/sign-up", response_model=SignupResponse)
+async def sign_up(request: SignupRequest):
+    """회원가입 API"""
+    db = next(get_db())
+    auth_service = get_auth_service(db)
+    
+    result = auth_service.signup(
+        name=request.name,
+        birthdate=request.birthdate,
+        username=request.username,
+        password=request.password,
+        role=request.role,
+        connecting_user_code=request.connecting_user_code
+    )
+    
+    if result["success"]:
+        return SignupResponse(
+            message="회원가입이 완료되었습니다.",
+            user_code=result["user_code"],
+            username=result["username"],
+            name=result["name"],
+            role=result["role"]
+        )
+    else:
+        raise HTTPException(status_code=400, detail=result["error"])
 
 
 # POST : upload voice with STT

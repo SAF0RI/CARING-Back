@@ -10,11 +10,13 @@ class User(Base):
     __tablename__ = "user"
     
     user_id = Column(BigInteger, primary_key=True, autoincrement=True)
+    user_code = Column(String(20), nullable=False, unique=True)  # 자동 생성되는 사용자 코드
     username = Column(String(64), nullable=False, unique=True)
     password = Column(String(72), nullable=False)  # bcrypt 해시
     role = Column(String(20), nullable=False)
     name = Column(String(50), nullable=False)
     birthdate = Column(Date, nullable=False)
+    connecting_user_code = Column(String(20), nullable=True)  # CARE 역할일 때 연결할 사용자 코드
     created_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
     updated_at = Column(DateTime, nullable=False, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
     
@@ -23,7 +25,7 @@ class User(Base):
     
     # 제약 조건
     __table_args__ = (
-        CheckConstraint("role IN ('USER','GUARDIAN','ADMIN')", name='check_user_role'),
+        CheckConstraint("role IN ('USER','CARE')", name='check_user_role'),
     )
 
 
