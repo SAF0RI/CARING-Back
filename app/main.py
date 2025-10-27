@@ -11,9 +11,12 @@ from .nlp_service import analyze_text_sentiment, analyze_text_entities, analyze_
 from .database import create_tables, engine, get_db
 from .models import Base
 from .auth_service import get_auth_service
+from .voice_service import get_voice_service
 from .dto import (
     SignupRequest, SignupResponse,
-    VoiceUploadResponse, VoiceListResponse, VoiceDetailResponse,
+    SigninRequest, SigninResponse,
+    UserVoiceUploadRequest, UserVoiceUploadResponse,
+    VoiceListResponse, VoiceDetailResponse,
     EmotionAnalysisResponse, TranscribeResponse,
     SentimentResponse, EntitiesResponse, SyntaxResponse, ComprehensiveAnalysisResponse
 )
@@ -133,6 +136,53 @@ async def sign_up(request: SignupRequest):
         )
     else:
         raise HTTPException(status_code=400, detail=result["error"])
+
+
+# POST : 로그인
+@app.post("/sign-in", response_model=SigninResponse)
+async def sign_in(request: SigninRequest, role: str):
+    """로그인 API (role은 Request Parameter)"""
+    db = next(get_db())
+    auth_service = get_auth_service(db)
+    
+    result = auth_service.signin(
+        username=request.username,
+        password=request.password,
+        role=role
+    )
+    
+    if result["success"]:
+        return SigninResponse(
+            message="로그인 성공",
+            username=result["username"],
+            name=result["name"],
+            role=result["role"]
+        )
+    else:
+        raise HTTPException(status_code=401, detail=result["error"])
+
+
+# POST : 사용자 음성 업로드
+@app.post("/users/voices", response_model=UserVoiceUploadResponse)
+async def upload_user_voice(
+    file: UploadFile = File(...),
+    username: str = Form(...),
+    language_code: str = Form(default="ko-KR")
+):
+    """사용자 음성 파일 업로드 (S3 + DB 저장 + STT)"""
+    db = next(get_db())
+    voice_service = get_voice_service(db)
+    
+    result = await voice_service.upload_user_voice(file, username, language_code)
+    
+    if result["success"]:
+        return UserVoiceUploadResponse(
+            success=True,
+            message=result["message"],
+            voice_id=result.get("voice_id")
+        )
+    else:
+        raise HTTPException(status_code=400, detail=result["message"])
 
 
 # POST : upload voice with STT

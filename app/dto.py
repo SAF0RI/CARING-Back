@@ -21,6 +21,19 @@ class SignupResponse(BaseModel):
     role: str
 
 
+# 로그인 관련 DTO
+class SigninRequest(BaseModel):
+    username: str
+    password: str
+
+
+class SigninResponse(BaseModel):
+    message: str
+    username: str
+    name: str
+    role: str
+
+
 # 음성 관련 DTO
 class VoiceUploadRequest(BaseModel):
     folder: Optional[str] = None
@@ -28,9 +41,18 @@ class VoiceUploadRequest(BaseModel):
 
 
 class VoiceUploadResponse(BaseModel):
-    uploaded: str
-    files: list[str]
-    transcription: dict
+    success: bool
+    message: str
+
+
+class UserVoiceUploadRequest(BaseModel):
+    language_code: str = "ko-KR"
+
+
+class UserVoiceUploadResponse(BaseModel):
+    success: bool
+    message: str
+    voice_id: Optional[int] = None
 
 
 class VoiceListResponse(BaseModel):

@@ -140,6 +140,64 @@ class AuthService:
     def get_user_by_username(self, username: str) -> Optional[User]:
         """사용자명으로 사용자 조회"""
         return self.db.query(User).filter(User.username == username).first()
+    
+    
+    def signin(self, username: str, password: str, role: str) -> dict:
+        """
+        로그인 처리
+        
+        Args:
+            username: 아이디
+            password: 비밀번호
+            role: 역할 (USER 또는 CARE)
+            
+        Returns:
+            dict: 로그인 결과
+        """
+        try:
+            # 1. 역할 검증
+            if role not in ['USER', 'CARE']:
+                return {
+                    "success": False,
+                    "error": "Invalid role. Must be 'USER' or 'CARE'"
+                }
+            
+            # 2. 사용자 조회
+            user = self.db.query(User).filter(User.username == username).first()
+            
+            if not user:
+                return {
+                    "success": False,
+                    "error": "User not found"
+                }
+            
+            # 3. 역할 확인
+            if user.role != role:
+                return {
+                    "success": False,
+                    "error": "Invalid role for this user"
+                }
+            
+            # 4. 비밀번호 검증
+            if not verify_password(password, user.password):
+                return {
+                    "success": False,
+                    "error": "Invalid password"
+                }
+            
+            return {
+                "success": True,
+                "username": user.username,
+                "name": user.name,
+                "role": user.role,
+                "user_code": user.user_code
+            }
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Signin failed: {str(e)}"
+            }
 
 
 def get_auth_service(db: Session) -> AuthService:
