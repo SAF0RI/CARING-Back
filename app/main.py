@@ -21,37 +21,44 @@ from .dto import (
 app = FastAPI(title="Caring API")
 
 
-# 서버 시작시 한 번만 실행하도록 모듈 레벨에서 체크
-import sys
-_startup_checked = False
+@app.get("/health")
+def health():
+    return {"status": "ok"}
 
-@app.on_event("startup")
-async def startup_event():
-    """서버 시작 시 테이블 자동 생성 (없는 테이블만 생성)"""
-    global _startup_checked
-    
-    # 이미 체크했다면 스킵
-    if _startup_checked:
-        return
-    
-    _startup_checked = True
-    
+
+# ==================== 데이터베이스 관리 API ====================
+
+@app.post("/admin/db/migrate")
+async def run_migration():
+    """데이터베이스 마이그레이션 실행"""
     try:
-        print("📊 데이터베이스 테이블 확인 중...")
+        from alembic import command
+        from alembic.config import Config
         
+        print("🔄 마이그레이션 실행 중...")
+        alembic_cfg = Config("alembic.ini")
+        command.upgrade(alembic_cfg, "head")
+        
+        return {
+            "success": True,
+            "message": "마이그레이션이 성공적으로 실행되었습니다."
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"마이그레이션 실패: {str(e)}")
+
+
+@app.post("/admin/db/init")
+async def init_database():
+    """데이터베이스 초기화 (테이블 생성)"""
+    try:
         from sqlalchemy import inspect
         inspector = inspect(engine)
         existing_tables = inspector.get_table_names()
-        
-        # 모든 모델의 테이블명 가져오기
         all_tables = set(Base.metadata.tables.keys())
-        
-        # 존재하지 않는 테이블만 생성
         missing_tables = all_tables - set(existing_tables)
         
         if missing_tables:
             print(f"🔨 테이블 생성 중: {', '.join(missing_tables)}")
-            # Foreign Key 의존성을 고려한 테이블 생성 순서 정의
             table_order = ['user', 'voice', 'voice_content', 'voice_analyze']
             
             for table_name in table_order:
@@ -59,24 +66,45 @@ async def startup_event():
                     table = Base.metadata.tables[table_name]
                     table.create(bind=engine, checkfirst=True)
             
-            # 정의되지 않은 다른 테이블들도 생성
             other_tables = missing_tables - set(table_order)
             if other_tables:
                 for table_name in other_tables:
                     table = Base.metadata.tables[table_name]
                     table.create(bind=engine, checkfirst=True)
             
-            print("✅ 테이블 생성 완료!")
+            return {
+                "success": True,
+                "message": "테이블이 생성되었습니다.",
+                "created_tables": list(missing_tables)
+            }
         else:
-            print("✅ 모든 테이블이 존재합니다.")
-            
+            return {
+                "success": True,
+                "message": "모든 테이블이 이미 존재합니다."
+            }
     except Exception as e:
-        print(f"⚠️  데이터베이스 연결 실패: {e}")
-        print("💡 데이터베이스 서버가 실행 중인지 확인해주세요.")
+        raise HTTPException(status_code=500, detail=f"데이터베이스 초기화 실패: {str(e)}")
 
-@app.get("/health")
-def health():
-    return {"status": "ok"}
+
+@app.post("/admin/db/status")
+async def get_database_status():
+    """데이터베이스 상태 확인"""
+    try:
+        from sqlalchemy import inspect
+        inspector = inspect(engine)
+        existing_tables = inspector.get_table_names()
+        all_tables = set(Base.metadata.tables.keys())
+        missing_tables = all_tables - set(existing_tables)
+        
+        return {
+            "success": True,
+            "total_tables": len(all_tables),
+            "existing_tables": existing_tables,
+            "missing_tables": list(missing_tables),
+            "is_sync": len(missing_tables) == 0
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"상태 확인 실패: {str(e)}")
 
 
 # POST : 회원가입

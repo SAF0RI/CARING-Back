@@ -27,6 +27,23 @@ uvicorn app.main:app --reload --port 8000
 
 API 문서: `http://127.0.0.1:8000/docs`
 
+## 데이터베이스 마이그레이션
+
+### 자동 마이그레이션
+서버 시작 시 자동으로 마이그레이션이 실행됩니다.
+
+### 수동 마이그레이션
+```bash
+# 마이그레이션 파일 생성
+alembic revision --autogenerate -m "커밋 메시지"
+
+# 마이그레이션 실행
+alembic upgrade head
+
+# 마이그레이션 롤백
+alembic downgrade -1
+```
+
 ## 환경 변수 설정
 
 프로젝트 루트에 `.env` 파일을 생성하고 다음 값을 채우세요. 예시는 `.env.example` 참고.

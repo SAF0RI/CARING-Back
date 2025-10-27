@@ -10,7 +10,7 @@ class SignupRequest(BaseModel):
     username: str
     password: str
     role: str  # USER or CARE
-    connecting_user_code: Optional[str] = None
+    connecting_user_code: Optional[str] = None  # CARE 역할일 때 연결할 사용자 코드
 
 
 class SignupResponse(BaseModel):

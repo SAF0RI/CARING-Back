@@ -110,7 +110,7 @@ class AuthService:
                 role=role,
                 name=name,
                 birthdate=birth_date,
-                connecting_user_code=connecting_user_code if role == 'CARE' else None
+                connecting_user_code=connecting_user_code
             )
             
             self.db.add(user)
