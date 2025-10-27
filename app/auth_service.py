@@ -55,7 +55,11 @@ class AuthService:
                     "error": "Invalid role. Must be 'USER' or 'CARE'"
                 }
             
-            # 2. CARE 역할일 때 연결 사용자 코드 검증
+            # 2. USER 역할일 때는 connecting_user_code를 None으로 설정 (무시)
+            if role == 'USER':
+                connecting_user_code = None
+            
+            # 3. CARE 역할일 때 연결 사용자 코드 검증
             if role == 'CARE':
                 if not connecting_user_code:
                     return {
@@ -74,7 +78,7 @@ class AuthService:
                         "error": "Connecting user not found"
                     }
             
-            # 3. 사용자명 중복 확인
+            # 4. 사용자명 중복 확인
             existing_user = self.db.query(User).filter(
                 User.username == username
             ).first()
@@ -85,7 +89,7 @@ class AuthService:
                     "error": "Username already exists"
                 }
             
-            # 4. 생년월일 파싱
+            # 5. 생년월일 파싱
             try:
                 birth_date = datetime.strptime(birthdate, "%Y.%m.%d").date()
             except ValueError:
@@ -99,10 +103,10 @@ class AuthService:
             while self.db.query(User).filter(User.user_code == user_code).first():
                 user_code = generate_user_code()
             
-            # 6. 비밀번호 해시
+            # 5-1. 비밀번호 해시
             hashed_password = hash_password(password)
             
-            # 7. 사용자 생성
+            # 6. 사용자 생성
             user = User(
                 user_code=user_code,
                 username=username,

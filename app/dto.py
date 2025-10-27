@@ -55,10 +55,23 @@ class UserVoiceUploadResponse(BaseModel):
     voice_id: Optional[int] = None
 
 
-class VoiceListResponse(BaseModel):
-    items: list[str]
-    count: int
-    next: int
+class VoiceQuestionUploadResponse(BaseModel):
+    success: bool
+    message: str
+    voice_id: Optional[int] = None
+    question_id: Optional[int] = None
+
+
+class VoiceListItem(BaseModel):
+    created_at: str
+    emotion: Optional[str] = None
+    question_title: Optional[str] = None
+    content: str
+
+
+class UserVoiceListResponse(BaseModel):
+    success: bool
+    voices: list[VoiceListItem]
 
 
 class VoiceDetailResponse(BaseModel):

@@ -44,6 +44,23 @@ alembic upgrade head
 alembic downgrade -1
 ```
 
+## 질문 데이터 초기화
+
+질문 템플릿을 데이터베이스에 저장합니다:
+
+```bash
+python init_questions.py
+```
+
+이 명령어는 다음 카테고리의 질문들을 자동으로 추가합니다:
+- emotion (14개)
+- stress (10개)
+- physical (10개)
+- social (10개)
+- self_reflection (15개)
+
+총 59개의 질문이 데이터베이스에 저장됩니다.
+
 ## 환경 변수 설정
 
 프로젝트 루트에 `.env` 파일을 생성하고 다음 값을 채우세요. 예시는 `.env.example` 참고.

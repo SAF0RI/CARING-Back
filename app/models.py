@@ -46,6 +46,7 @@ class Voice(Base):
     user = relationship("User", back_populates="voices")
     voice_content = relationship("VoiceContent", back_populates="voice", uselist=False, cascade="all, delete-orphan")
     voice_analyze = relationship("VoiceAnalyze", back_populates="voice", uselist=False, cascade="all, delete-orphan")
+    questions = relationship("Question", secondary="voice_question", back_populates="voices")
     
     # 인덱스
     __table_args__ = (
@@ -103,4 +104,37 @@ class VoiceAnalyze(Base):
         UniqueConstraint('voice_id', name='uq_va_voice'),
         CheckConstraint("happy_bps <= 10000 AND sad_bps <= 10000 AND neutral_bps <= 10000 AND angry_bps <= 10000 AND fear_bps <= 10000", name='check_emotion_bps_range'),
         CheckConstraint("happy_bps + sad_bps + neutral_bps + angry_bps + fear_bps = 10000", name='check_emotion_bps_sum'),
+    )
+
+
+class Question(Base):
+    """질문 템플릿 테이블"""
+    __tablename__ = "question"
+    
+    question_id = Column(BigInteger, primary_key=True, autoincrement=True)
+    question_category = Column(String(50), nullable=False)  # emotion, stress, physical, social, self_reflection
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
+    
+    # 다대다 관계
+    voices = relationship("Voice", secondary="voice_question", back_populates="questions")
+    
+    # 제약 조건
+    __table_args__ = (
+        CheckConstraint("question_category IN ('emotion', 'stress', 'physical', 'social', 'self_reflection')", name='check_question_category'),
+    )
+
+
+class VoiceQuestion(Base):
+    """Voice와 Question의 다대다 매핑 테이블"""
+    __tablename__ = "voice_question"
+    
+    voice_question_id = Column(BigInteger, primary_key=True, autoincrement=True)
+    voice_id = Column(BigInteger, ForeignKey("voice.voice_id", ondelete="CASCADE"), nullable=False)
+    question_id = Column(BigInteger, ForeignKey("question.question_id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
+    
+    # 제약 조건
+    __table_args__ = (
+        UniqueConstraint('voice_id', 'question_id', name='uq_voice_question'),
     )

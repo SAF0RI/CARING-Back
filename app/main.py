@@ -16,7 +16,8 @@ from .dto import (
     SignupRequest, SignupResponse,
     SigninRequest, SigninResponse,
     UserVoiceUploadRequest, UserVoiceUploadResponse,
-    VoiceListResponse, VoiceDetailResponse,
+    VoiceQuestionUploadResponse,
+    UserVoiceListResponse,
     EmotionAnalysisResponse, TranscribeResponse,
     SentimentResponse, EntitiesResponse, SyntaxResponse, ComprehensiveAnalysisResponse
 )
@@ -62,7 +63,7 @@ async def init_database():
         
         if missing_tables:
             print(f"🔨 테이블 생성 중: {', '.join(missing_tables)}")
-            table_order = ['user', 'voice', 'voice_content', 'voice_analyze']
+            table_order = ['user', 'voice', 'voice_content', 'voice_analyze', 'question', 'voice_question']
             
             for table_name in table_order:
                 if table_name in missing_tables:
@@ -89,7 +90,7 @@ async def init_database():
         raise HTTPException(status_code=500, detail=f"데이터베이스 초기화 실패: {str(e)}")
 
 
-@app.post("/admin/db/status")
+@app.get("/admin/db/status")
 async def get_database_status():
     """데이터베이스 상태 확인"""
     try:
@@ -109,6 +110,7 @@ async def get_database_status():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"상태 확인 실패: {str(e)}")
 
+# --------------------------------------auth API--------------------------------------
 
 # POST : 회원가입
 @app.post("/sign-up", response_model=SignupResponse)
@@ -163,22 +165,62 @@ async def sign_in(request: SigninRequest, role: str):
 
 
 # POST : 사용자 음성 업로드
-@app.post("/users/voices", response_model=UserVoiceUploadResponse)
-async def upload_user_voice(
-    file: UploadFile = File(...),
-    username: str = Form(...)
-):
-    """사용자 음성 파일 업로드 (S3 + DB 저장)"""
+# @app.post("/users/voices", response_model=UserVoiceUploadResponse)
+# async def upload_user_voice(
+#     file: UploadFile = File(...),
+#     username: str = Form(...)
+# ):
+#     """사용자 음성 파일 업로드 (S3 + DB 저장)"""
+#     db = next(get_db())
+#     voice_service = get_voice_service(db)
+    
+#     result = await voice_service.upload_user_voice(file, username)
+    
+#     if result["success"]:
+#         return UserVoiceUploadResponse(
+#             success=True,
+#             message=result["message"],
+#             voice_id=result.get("voice_id")
+#         )
+#     else:
+#         raise HTTPException(status_code=400, detail=result["message"])
+
+
+# --------------------------------------voice API--------------------------------------
+# GET : 사용자 음성 리스트 조회
+@app.get("/users/voices", response_model=UserVoiceListResponse)
+async def get_user_voice_list(username: str):
+    """사용자 음성 리스트 조회"""
     db = next(get_db())
     voice_service = get_voice_service(db)
     
-    result = await voice_service.upload_user_voice(file, username)
+    result = voice_service.get_user_voice_list(username)
+    
+    return UserVoiceListResponse(
+        success=result["success"],
+        voices=result.get("voices", [])
+    )
+
+
+# POST : 질문과 함께 음성 업로드
+@app.post("/users/voices", response_model=VoiceQuestionUploadResponse)
+async def upload_voice_with_question(
+    file: UploadFile = File(...),
+    username: str = Form(...),
+    question_id: int = Form(...)
+):
+    """질문과 함께 음성 파일 업로드 (S3 + DB 저장 + STT + voice_question 매핑)"""
+    db = next(get_db())
+    voice_service = get_voice_service(db)
+    
+    result = await voice_service.upload_voice_with_question(file, username, question_id)
     
     if result["success"]:
-        return UserVoiceUploadResponse(
+        return VoiceQuestionUploadResponse(
             success=True,
             message=result["message"],
-            voice_id=result.get("voice_id")
+            voice_id=result.get("voice_id"),
+            question_id=result.get("question_id")
         )
     else:
         raise HTTPException(status_code=400, detail=result["message"])

@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 from typing import Optional, List
 from datetime import date, datetime
-from .models import User, Voice, VoiceContent, VoiceAnalyze
+from .models import User, Voice, VoiceContent, VoiceAnalyze, Question, VoiceQuestion
 
 
 class DatabaseService:
@@ -64,8 +64,10 @@ class DatabaseService:
         return self.db.query(Voice).filter(Voice.voice_key == voice_key).first()
     
     def get_voices_by_user(self, user_id: int, skip: int = 0, limit: int = 50) -> List[Voice]:
-        """사용자별 음성 파일 목록 조회"""
+        """사용자별 음성 파일 목록 조회 (question 포함)"""
+        from sqlalchemy.orm import joinedload
         return self.db.query(Voice).filter(Voice.user_id == user_id)\
+            .options(joinedload(Voice.questions))\
             .order_by(Voice.created_at.desc()).offset(skip).limit(limit).all()
     
     def get_all_voices(self, skip: int = 0, limit: int = 50) -> List[Voice]:
@@ -170,9 +172,64 @@ class DatabaseService:
             self.db.commit()
             self.db.refresh(voice_analyze)
         return voice_analyze
+    
+    # Question 관련 메서드
+    def create_question(self, question_category: str, content: str) -> Question:
+        """질문 템플릿 생성"""
+        question = Question(
+            question_category=question_category,
+            content=content
+        )
+        self.db.add(question)
+        self.db.commit()
+        self.db.refresh(question)
+        return question
+    
+    def get_questions_by_category(self, category: str) -> List[Question]:
+        """카테고리별 질문 조회"""
+        return self.db.query(Question).filter(Question.question_category == category).all()
+    
+    def get_all_questions(self) -> List[Question]:
+        """전체 질문 조회"""
+        return self.db.query(Question).all()
+    
+    def get_question_by_id(self, question_id: int) -> Optional[Question]:
+        """ID로 질문 조회"""
+        return self.db.query(Question).filter(Question.question_id == question_id).first()
+    
+    # VoiceQuestion 관련 메서드
+    def link_voice_question(self, voice_id: int, question_id: int) -> VoiceQuestion:
+        """Voice와 Question 연결"""
+        voice_question = VoiceQuestion(
+            voice_id=voice_id,
+            question_id=question_id
+        )
+        self.db.add(voice_question)
+        self.db.commit()
+        self.db.refresh(voice_question)
+        return voice_question
+    
+    def get_questions_by_voice_id(self, voice_id: int) -> List[Question]:
+        """음성에 연결된 질문 조회"""
+        return self.db.query(Question).join(VoiceQuestion).filter(VoiceQuestion.voice_id == voice_id).all()
+    
+    def get_voices_by_question_id(self, question_id: int) -> List[Voice]:
+        """질문에 연결된 음성 조회"""
+        return self.db.query(Voice).join(VoiceQuestion).filter(VoiceQuestion.question_id == question_id).all()
+    
+    def unlink_voice_question(self, voice_id: int, question_id: int) -> bool:
+        """Voice와 Question 연결 해제"""
+        voice_question = self.db.query(VoiceQuestion).filter(
+            VoiceQuestion.voice_id == voice_id,
+            VoiceQuestion.question_id == question_id
+        ).first()
+        if voice_question:
+            self.db.delete(voice_question)
+            self.db.commit()
+            return True
+        return False
 
 
-# 편의 함수들
 def get_db_service(db: Session) -> DatabaseService:
     """데이터베이스 서비스 인스턴스 생성"""
     return DatabaseService(db)
