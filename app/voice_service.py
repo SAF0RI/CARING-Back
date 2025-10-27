@@ -6,6 +6,7 @@ from io import BytesIO
 import asyncio
 from .s3_service import upload_fileobj
 from .stt_service import transcribe_voice
+from .nlp_service import analyze_text_sentiment
 from .constants import VOICE_BASE_PREFIX, DEFAULT_UPLOAD_FOLDER
 from .db_service import get_db_service
 from .auth_service import get_auth_service
@@ -76,8 +77,8 @@ class VoiceService:
                 sample_rate=16000  # 기본값
             )
             
-            # 5. STT는 백그라운드에서 비동기로 처리
-            asyncio.create_task(self._process_stt_background(file_content, file.filename, voice.voice_id))
+            # 5. STT → NLP 순차 처리 (백그라운드 비동기)
+            asyncio.create_task(self._process_stt_and_nlp_background(file_content, file.filename, voice.voice_id))
             
             return {
                 "success": True,
@@ -90,9 +91,10 @@ class VoiceService:
                 "message": f"업로드 실패: {str(e)}"
             }
     
-    async def _process_stt_background(self, file_content: bytes, filename: str, voice_id: int):
-        """STT 처리를 백그라운드에서 비동기로 실행"""
+    async def _process_stt_and_nlp_background(self, file_content: bytes, filename: str, voice_id: int):
+        """STT → NLP 순차 처리 (백그라운드 비동기)"""
         try:
+            # 1. STT 처리
             file_obj_for_stt = BytesIO(file_content)
             
             class TempUploadFile:
@@ -104,17 +106,40 @@ class VoiceService:
             stt_file = TempUploadFile(file_obj_for_stt, filename)
             stt_result = transcribe_voice(stt_file, "ko-KR")
             
-            # VoiceContent 저장 (STT 결과)
-            if stt_result.get("transcript"):
-                self.db_service.create_voice_content(
-                    voice_id=voice_id,
-                    content=stt_result["transcript"],
-                    locale="ko-KR",
-                    provider="google",
-                    confidence_bps=int(stt_result.get("confidence", 0) * 10000)
-                )
+            if not stt_result.get("transcript"):
+                print(f"STT 변환 실패: voice_id={voice_id}")
+                return
+            
+            transcript = stt_result["transcript"]
+            confidence = stt_result.get("confidence", 0)
+            
+            # 2. NLP 감정 분석 (STT 결과로)
+            nlp_result = analyze_text_sentiment(transcript, "ko")
+            
+            # 3. VoiceContent 저장 (STT 결과 + NLP 감정 분석 결과)
+            score_bps = None
+            magnitude_x1000 = None
+            
+            if "sentiment" in nlp_result and nlp_result["sentiment"]:
+                sentiment = nlp_result["sentiment"]
+                score_bps = int(sentiment.get("score", 0) * 10000)  # -10000~10000
+                magnitude = sentiment.get("magnitude", 0)
+                magnitude_x1000 = int(magnitude * 1000)  # 0~?
+            
+            self.db_service.create_voice_content(
+                voice_id=voice_id,
+                content=transcript,
+                score_bps=score_bps,
+                magnitude_x1000=magnitude_x1000,
+                locale="ko-KR",
+                provider="google",
+                confidence_bps=int(confidence * 10000)
+            )
+            
+            print(f"STT → NLP 처리 완료: voice_id={voice_id}")
+            
         except Exception as e:
-            print(f"STT 처리 중 오류 발생: {e}")
+            print(f"STT → NLP 처리 중 오류 발생: {e}")
 
 
 def get_voice_service(db: Session) -> VoiceService:
