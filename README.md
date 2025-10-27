@@ -45,7 +45,19 @@ S3_PREFIX=voices
 GOOGLE_APPLICATION_CREDENTIALS=/path/to/your/service-account-key.json
 ```
 
-`.env`는 `app/__init__.py`에서 자동 로드됩니다.
+### 데이터베이스 설정
+```
+# MySQL 데이터베이스 연결 정보
+DB_HOST=localhost
+DB_PORT=3306
+DB_USER=root
+DB_PASSWORD=your_password
+DB_NAME=table_name
+```
+
+`.env`는 `app/database.py`에서 자동 로드됩니다.
+
+> 💡 **배포 환경**: 운영 환경에서는 환경변수를 시스템에 직접 설정하거나, `.env` 파일을 사용하지 않고 컨테이너/Docker의 환경변수 설정을 사용하세요.
 
 ## API 엔드포인트
 
