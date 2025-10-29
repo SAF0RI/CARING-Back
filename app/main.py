@@ -204,11 +204,11 @@ async def get_user_voice_list(username: str):
 
 # GET : 사용자 음성 상세 조회
 @app.get("/users/voices/{voice_id}", response_model=UserVoiceDetailResponse)
-async def get_user_voice_detail(voice_id: int, user_code: str):
-    """voice_id와 user_code로 상세 조회"""
+async def get_user_voice_detail(voice_id: int, username: str):
+    """voice_id와 username으로 상세 조회"""
     db = next(get_db())
     voice_service = get_voice_service(db)
-    result = voice_service.get_user_voice_detail(voice_id, user_code)
+    result = voice_service.get_user_voice_detail(voice_id, username)
     if not result.get("success"):
         raise HTTPException(status_code=404, detail=result.get("error", "Not Found"))
     return UserVoiceDetailResponse(
@@ -223,13 +223,16 @@ async def get_user_voice_detail(voice_id: int, user_code: str):
 @app.post("/users/voices", response_model=VoiceQuestionUploadResponse)
 async def upload_voice_with_question(
     file: UploadFile = File(...),
-    username: str = Form(...),
-    question_id: int = Form(...)
+    question_id: int = Form(...),
+    username: str = None,
 ):
     """질문과 함께 음성 파일 업로드 (S3 + DB 저장 + STT + voice_question 매핑)"""
     db = next(get_db())
     voice_service = get_voice_service(db)
     
+    if not username:
+        raise HTTPException(status_code=400, detail="username is required as query parameter")
+
     result = await voice_service.upload_voice_with_question(file, username, question_id)
     
     if result["success"]:

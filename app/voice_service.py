@@ -203,10 +203,10 @@ class VoiceService:
                 "voices": []
             }
 
-    def get_user_voice_detail(self, voice_id: int, user_code: str) -> Dict[str, Any]:
-        """voice_id와 user_code로 상세 정보 조회"""
+    def get_user_voice_detail(self, voice_id: int, username: str) -> Dict[str, Any]:
+        """voice_id와 username으로 상세 정보 조회"""
         try:
-            voice = self.db_service.get_voice_detail_for_user(voice_id, user_code)
+            voice = self.db_service.get_voice_detail_for_username(voice_id, username)
             if not voice:
                 return {"success": False, "error": "Voice not found or not owned by user"}
 
