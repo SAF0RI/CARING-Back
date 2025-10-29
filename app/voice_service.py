@@ -233,6 +233,20 @@ class VoiceService:
             }
         except Exception:
             return {"success": False, "error": "Failed to fetch voice detail"}
+
+    def delete_user_voice(self, voice_id: int, username: str) -> Dict[str, Any]:
+        """사용자 소유 검증 후 음성 및 연관 데이터 삭제"""
+        try:
+            voice = self.db_service.get_voice_owned_by_username(voice_id, username)
+            if not voice:
+                return {"success": False, "message": "Voice not found or not owned by user"}
+
+            ok = self.db_service.delete_voice_with_relations(voice_id)
+            if not ok:
+                return {"success": False, "message": "Delete failed"}
+            return {"success": True, "message": "Deleted"}
+        except Exception as e:
+            return {"success": False, "message": f"Delete error: {str(e)}"}
     
     async def upload_voice_with_question(self, file: UploadFile, username: str, question_id: int) -> Dict[str, Any]:
         """

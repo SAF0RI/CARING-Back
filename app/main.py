@@ -212,11 +212,23 @@ async def get_user_voice_detail(voice_id: int, username: str):
     if not result.get("success"):
         raise HTTPException(status_code=404, detail=result.get("error", "Not Found"))
     return UserVoiceDetailResponse(
+        voice_id=voice_id,
         title=result.get("title"),
         top_emotion=result.get("top_emotion"),
         created_at=result.get("created_at", ""),
         voice_content=result.get("voice_content"),
     )
+
+
+# DELETE : 유저 특정 음성 삭제
+@app.delete("/users/voices/{voice_id}")
+async def delete_user_voice(voice_id: int, username: str):
+    db = next(get_db())
+    voice_service = get_voice_service(db)
+    result = voice_service.delete_user_voice(voice_id, username)
+    if result.get("success"):
+        return {"success": True}
+    raise HTTPException(status_code=400, detail=result.get("message", "Delete failed"))
 
 
 # POST : 질문과 함께 음성 업로드

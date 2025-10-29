@@ -244,6 +244,29 @@ class DatabaseService:
             return True
         return False
 
+    # 삭제 관련
+    def get_voice_owned_by_username(self, voice_id: int, username: str) -> Optional[Voice]:
+        """username 소유의 voice 조회"""
+        return (
+            self.db.query(Voice)
+            .join(User, Voice.user_id == User.user_id)
+            .filter(Voice.voice_id == voice_id, User.username == username)
+            .first()
+        )
+
+    def delete_voice_with_relations(self, voice_id: int) -> bool:
+        """연관 데이터(voice_question, voice_content, voice_analyze) 삭제 후 voice 삭제"""
+        # voice_question
+        self.db.query(VoiceQuestion).filter(VoiceQuestion.voice_id == voice_id).delete(synchronize_session=False)
+        # voice_content
+        self.db.query(VoiceContent).filter(VoiceContent.voice_id == voice_id).delete(synchronize_session=False)
+        # voice_analyze
+        self.db.query(VoiceAnalyze).filter(VoiceAnalyze.voice_id == voice_id).delete(synchronize_session=False)
+        # voice
+        deleted = self.db.query(Voice).filter(Voice.voice_id == voice_id).delete(synchronize_session=False)
+        self.db.commit()
+        return deleted > 0
+
 
 def get_db_service(db: Session) -> DatabaseService:
     """데이터베이스 서비스 인스턴스 생성"""

@@ -76,6 +76,7 @@ class UserVoiceListResponse(BaseModel):
 
 
 class UserVoiceDetailResponse(BaseModel):
+    voice_id: int
     title: Optional[str] = None
     top_emotion: Optional[str] = None
     created_at: str
