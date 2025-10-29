@@ -17,7 +17,7 @@ from .dto import (
     SigninRequest, SigninResponse,
     UserVoiceUploadRequest, UserVoiceUploadResponse,
     VoiceQuestionUploadResponse,
-    UserVoiceListResponse,
+    UserVoiceListResponse, UserVoiceDetailResponse,
     EmotionAnalysisResponse, TranscribeResponse,
     SentimentResponse, EntitiesResponse, SyntaxResponse, ComprehensiveAnalysisResponse
 )
@@ -199,6 +199,23 @@ async def get_user_voice_list(username: str):
     return UserVoiceListResponse(
         success=result["success"],
         voices=result.get("voices", [])
+    )
+
+
+# GET : 사용자 음성 상세 조회
+@app.get("/users/voices/{voice_id}", response_model=UserVoiceDetailResponse)
+async def get_user_voice_detail(voice_id: int, user_code: str):
+    """voice_id와 user_code로 상세 조회"""
+    db = next(get_db())
+    voice_service = get_voice_service(db)
+    result = voice_service.get_user_voice_detail(voice_id, user_code)
+    if not result.get("success"):
+        raise HTTPException(status_code=404, detail=result.get("error", "Not Found"))
+    return UserVoiceDetailResponse(
+        title=result.get("title"),
+        top_emotion=result.get("top_emotion"),
+        created_at=result.get("created_at", ""),
+        voice_content=result.get("voice_content"),
     )
 
 

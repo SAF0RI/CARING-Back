@@ -74,6 +74,13 @@ class UserVoiceListResponse(BaseModel):
     voices: list[VoiceListItem]
 
 
+class UserVoiceDetailResponse(BaseModel):
+    title: Optional[str] = None
+    top_emotion: Optional[str] = None
+    created_at: str
+    voice_content: Optional[str] = None
+
+
 class VoiceDetailResponse(BaseModel):
     voice_id: str
     filename: str

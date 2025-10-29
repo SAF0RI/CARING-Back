@@ -58,6 +58,21 @@ class DatabaseService:
     def get_voice_by_id(self, voice_id: int) -> Optional[Voice]:
         """ID로 음성 파일 조회"""
         return self.db.query(Voice).filter(Voice.voice_id == voice_id).first()
+
+    def get_voice_detail_for_user(self, voice_id: int, user_code: str) -> Optional[Voice]:
+        """유저 코드로 소유권을 검증하며 상세를 로드(joinedload)"""
+        from sqlalchemy.orm import joinedload
+        return (
+            self.db.query(Voice)
+            .join(User, Voice.user_id == User.user_id)
+            .filter(Voice.voice_id == voice_id, User.user_code == user_code)
+            .options(
+                joinedload(Voice.questions),
+                joinedload(Voice.voice_content),
+                joinedload(Voice.voice_analyze),
+            )
+            .first()
+        )
     
     def get_voice_by_key(self, voice_key: str) -> Optional[Voice]:
         """S3 키로 음성 파일 조회"""

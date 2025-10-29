@@ -201,6 +201,37 @@ class VoiceService:
                 "success": False,
                 "voices": []
             }
+
+    def get_user_voice_detail(self, voice_id: int, user_code: str) -> Dict[str, Any]:
+        """voice_id와 user_code로 상세 정보 조회"""
+        try:
+            voice = self.db_service.get_voice_detail_for_user(voice_id, user_code)
+            if not voice:
+                return {"success": False, "error": "Voice not found or not owned by user"}
+
+            title = None
+            if voice.questions:
+                title = voice.questions[0].content
+
+            top_emotion = None
+            if voice.voice_analyze:
+                top_emotion = voice.voice_analyze.top_emotion
+
+            created_at = voice.created_at.isoformat() if voice.created_at else ""
+
+            voice_content = None
+            if voice.voice_content:
+                voice_content = voice.voice_content.content
+
+            return {
+                "success": True,
+                "title": title,
+                "top_emotion": top_emotion,
+                "created_at": created_at,
+                "voice_content": voice_content,
+            }
+        except Exception:
+            return {"success": False, "error": "Failed to fetch voice detail"}
     
     async def upload_voice_with_question(self, file: UploadFile, username: str, question_id: int) -> Dict[str, Any]:
         """
