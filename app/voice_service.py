@@ -185,6 +185,7 @@ class VoiceService:
                     content = voice.voice_content.content
                 
                 voice_list.append({
+                    "voice_id": voice.voice_id,
                     "created_at": created_at,
                     "emotion": emotion,
                     "question_title": question_title,

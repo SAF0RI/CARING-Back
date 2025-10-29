@@ -63,6 +63,7 @@ class VoiceQuestionUploadResponse(BaseModel):
 
 
 class VoiceListItem(BaseModel):
+    voice_id: int
     created_at: str
     emotion: Optional[str] = None
     question_title: Optional[str] = None
