@@ -163,7 +163,7 @@ class VoiceService:
                 except Exception:
                     return 0
 
-            probs = result.get("probabilities") or result.get("scores") or {}
+            probs = result.get("emotion_scores", {})
             happy = to_bps(probs.get("happy", probs.get("happiness", 0)))
             sad = to_bps(probs.get("sad", probs.get("sadness", 0)))
             neutral = to_bps(probs.get("neutral", 0))
@@ -178,12 +178,18 @@ class VoiceService:
             model_version = result.get("model_version")
 
             total_raw = happy + sad + neutral + angry + fear + surprise
+            print(f"[voice_analyze] ROUND 이전: happy={happy}, sad={sad}, neutral={neutral}, angry={angry}, fear={fear}, surprise={surprise} → 합계={total_raw}")
             if total_raw == 0:
                 # 모델이 확률을 반환하지 못한 경우: 중립 100%
+                print(f"[voice_analyze] 확률 없음: 모두 0 → neutral=10000")
                 happy, sad, neutral, angry, fear, surprise = 0, 0, 10000, 0, 0, 0
             else:
                 # 비율 보정(라운딩 후 합 10000로 맞춤)
                 scale = 10000 / float(total_raw)
+                before_vals = {
+                    "happy": happy, "sad": sad, "neutral": neutral, 
+                    "angry": angry, "fear": fear, "surprise": surprise,
+                }
                 vals = {
                     "happy": int(round(happy * scale)),
                     "sad": int(round(sad * scale)),
@@ -192,11 +198,14 @@ class VoiceService:
                     "fear": int(round(fear * scale)),
                     "surprise": int(round(surprise * scale)),
                 }
+                print(f"[voice_analyze] ROUND: raw={before_vals} scale={scale:.5f} → after={vals}")
                 diff = 10000 - sum(vals.values())
                 if diff != 0:
                     # 가장 큰 항목에 차이를 보정(음수/양수 모두 처리)
                     key_max = max(vals, key=lambda k: vals[k])
+                    print(f"[voice_analyze] DIFF 보정: {diff} → max_emotion={key_max} ({vals[key_max]}) before")
                     vals[key_max] = max(0, min(10000, vals[key_max] + diff))
+                    print(f"[voice_analyze] DIFF 보정: {diff} → max_emotion={key_max} after={vals[key_max]}")
                 happy, sad, neutral, angry, fear, surprise = (
                     vals["happy"], vals["sad"], vals["neutral"], vals["angry"], vals["fear"], vals["surprise"]
                 )
