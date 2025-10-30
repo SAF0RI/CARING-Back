@@ -168,7 +168,7 @@ class DatabaseService:
     
     # VoiceAnalyze 관련 메서드
     def create_voice_analyze(self, voice_id: int, happy_bps: int, sad_bps: int, 
-                           neutral_bps: int, angry_bps: int, fear_bps: int,
+                           neutral_bps: int, angry_bps: int, fear_bps: int, surprise_bps: int = 0,
                            top_emotion: Optional[str] = None, top_confidence_bps: Optional[int] = None,
                            model_version: Optional[str] = None) -> VoiceAnalyze:
         """음성 감정 분석 데이터 생성"""
@@ -179,6 +179,7 @@ class DatabaseService:
             neutral_bps=neutral_bps,
             angry_bps=angry_bps,
             fear_bps=fear_bps,
+            surprise_bps=surprise_bps,
             top_emotion=top_emotion,
             top_confidence_bps=top_confidence_bps,
             model_version=model_version
@@ -193,7 +194,7 @@ class DatabaseService:
         return self.db.query(VoiceAnalyze).filter(VoiceAnalyze.voice_id == voice_id).first()
     
     def update_voice_analyze(self, voice_id: int, happy_bps: int, sad_bps: int, 
-                           neutral_bps: int, angry_bps: int, fear_bps: int,
+                           neutral_bps: int, angry_bps: int, fear_bps: int, surprise_bps: Optional[int] = None,
                            top_emotion: Optional[str] = None, top_confidence_bps: Optional[int] = None,
                            model_version: Optional[str] = None) -> Optional[VoiceAnalyze]:
         """음성 감정 분석 결과 업데이트"""
@@ -204,6 +205,8 @@ class DatabaseService:
             voice_analyze.neutral_bps = neutral_bps
             voice_analyze.angry_bps = angry_bps
             voice_analyze.fear_bps = fear_bps
+            if surprise_bps is not None:
+                voice_analyze.surprise_bps = surprise_bps
             if top_emotion is not None:
                 voice_analyze.top_emotion = top_emotion
             if top_confidence_bps is not None:

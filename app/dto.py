@@ -94,6 +94,19 @@ class UserVoiceDetailResponse(BaseModel):
     voice_content: Optional[str] = None
 
 
+class VoiceAnalyzePreviewResponse(BaseModel):
+    voice_id: Optional[int] = None
+    happy_bps: int
+    sad_bps: int
+    neutral_bps: int
+    angry_bps: int
+    fear_bps: int
+    surprise_bps: int
+    top_emotion: Optional[str] = None
+    top_confidence_bps: Optional[int] = None
+    model_version: Optional[str] = None
+
+
 class VoiceDetailResponse(BaseModel):
     voice_id: str
     filename: str

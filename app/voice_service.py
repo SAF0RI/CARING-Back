@@ -169,16 +169,18 @@ class VoiceService:
             neutral = to_bps(probs.get("neutral", 0))
             angry = to_bps(probs.get("angry", probs.get("anger", 0)))
             fear = to_bps(probs.get("fear", probs.get("fearful", 0)))
+            surprise = to_bps(probs.get("surprise", probs.get("surprised", 0)))
 
-            top_emotion = result.get("top_emotion") or result.get("label")
+            # 모델 응답 키 보정: emotion_service는 기본적으로 "emotion"을 반환
+            top_emotion = result.get("top_emotion") or result.get("label") or result.get("emotion")
             top_conf = result.get("top_confidence") or result.get("confidence", 0)
             top_conf_bps = to_bps(top_conf)
             model_version = result.get("model_version")
 
-            total_raw = happy + sad + neutral + angry + fear
+            total_raw = happy + sad + neutral + angry + fear + surprise
             if total_raw == 0:
                 # 모델이 확률을 반환하지 못한 경우: 중립 100%
-                happy, sad, neutral, angry, fear = 0, 0, 10000, 0, 0
+                happy, sad, neutral, angry, fear, surprise = 0, 0, 10000, 0, 0, 0
             else:
                 # 비율 보정(라운딩 후 합 10000로 맞춤)
                 scale = 10000 / float(total_raw)
@@ -188,14 +190,15 @@ class VoiceService:
                     "neutral": int(round(neutral * scale)),
                     "angry": int(round(angry * scale)),
                     "fear": int(round(fear * scale)),
+                    "surprise": int(round(surprise * scale)),
                 }
                 diff = 10000 - sum(vals.values())
                 if diff != 0:
                     # 가장 큰 항목에 차이를 보정(음수/양수 모두 처리)
                     key_max = max(vals, key=lambda k: vals[k])
                     vals[key_max] = max(0, min(10000, vals[key_max] + diff))
-                happy, sad, neutral, angry, fear = (
-                    vals["happy"], vals["sad"], vals["neutral"], vals["angry"], vals["fear"]
+                happy, sad, neutral, angry, fear, surprise = (
+                    vals["happy"], vals["sad"], vals["neutral"], vals["angry"], vals["fear"], vals["surprise"]
                 )
 
             self.db_service.create_voice_analyze(
@@ -205,6 +208,7 @@ class VoiceService:
                 neutral_bps=neutral,
                 angry_bps=angry,
                 fear_bps=fear,
+                surprise_bps=surprise,
                 top_emotion=top_emotion,
                 top_confidence_bps=top_conf_bps,
                 model_version=model_version,

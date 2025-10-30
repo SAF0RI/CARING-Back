@@ -20,7 +20,8 @@ from .dto import (
     UserVoiceListResponse, UserVoiceDetailResponse,
     CareUserVoiceListResponse,
     EmotionAnalysisResponse, TranscribeResponse,
-    SentimentResponse, EntitiesResponse, SyntaxResponse, ComprehensiveAnalysisResponse
+    SentimentResponse, EntitiesResponse, SyntaxResponse, ComprehensiveAnalysisResponse,
+    VoiceAnalyzePreviewResponse
 )
 
 app = FastAPI(title="Caring API")
@@ -346,7 +347,7 @@ async def list_voices(skip: int = 0, limit: int = 50, folder: Optional[str] = No
 
 
 # TEST: emotion_service 모델로 음성 감정 분석만 수행 (저장 없음)
-@app.post("/test/voice/analyze")
+@app.post("/test/voice/analyze", response_model=VoiceAnalyzePreviewResponse)
 async def test_emotion_analyze(file: UploadFile = File(...)):
     """업로드된 파일을 emotion_service 모델로 분석하여 결과만 반환합니다."""
     try:
@@ -361,7 +362,55 @@ async def test_emotion_analyze(file: UploadFile = File(...)):
 
         wrapped = FileWrapper(BytesIO(data), file.filename)
         result = analyze_voice_emotion(wrapped)
-        return result
+        # probs dict에서 6개 감정 추출 → bps 정규화(합 10000)
+        probs = result.get("probabilities") or result.get("scores") or result.get("emotion_scores") or {}
+        def to_bps(x):
+            try:
+                return max(0, min(10000, int(round(float(x) * 10000))))
+            except Exception:
+                return 0
+        happy = to_bps(probs.get("happy", 0))
+        sad = to_bps(probs.get("sad", 0))
+        neutral = to_bps(probs.get("neutral", 0))
+        angry = to_bps(probs.get("angry", 0))
+        fear = to_bps(probs.get("fear", 0))
+        surprise = to_bps(probs.get("surprise", 0))
+        total = happy + sad + neutral + angry + fear + surprise
+        if total == 0:
+            neutral = 10000
+            happy = sad = angry = fear = surprise = 0
+        else:
+            scale = 10000 / float(total)
+            vals = {
+                "happy": int(round(happy * scale)),
+                "sad": int(round(sad * scale)),
+                "neutral": int(round(neutral * scale)),
+                "angry": int(round(angry * scale)),
+                "fear": int(round(fear * scale)),
+                "surprise": int(round(surprise * scale)),
+            }
+            diff = 10000 - sum(vals.values())
+            if diff != 0:
+                k = max(vals, key=lambda k: vals[k])
+                vals[k] = max(0, min(10000, vals[k] + diff))
+            happy, sad, neutral, angry, fear, surprise = (
+                vals["happy"], vals["sad"], vals["neutral"], vals["angry"], vals["fear"], vals["surprise"]
+            )
+
+        top_emotion = result.get("top_emotion") or result.get("label") or result.get("emotion")
+        top_conf_bps = to_bps(result.get("top_confidence") or result.get("confidence", 0))
+        return VoiceAnalyzePreviewResponse(
+            voice_id=None,
+            happy_bps=happy,
+            sad_bps=sad,
+            neutral_bps=neutral,
+            angry_bps=angry,
+            fear_bps=fear,
+            surprise_bps=surprise,
+            top_emotion=top_emotion,
+            top_confidence_bps=top_conf_bps,
+            model_version=result.get("model_version")
+        )
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"emotion analyze failed: {str(e)}")
 
