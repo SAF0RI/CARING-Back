@@ -75,6 +75,17 @@ class UserVoiceListResponse(BaseModel):
     voices: list[VoiceListItem]
 
 
+class CareVoiceListItem(BaseModel):
+    voice_id: int
+    created_at: str
+    emotion: Optional[str] = None
+
+
+class CareUserVoiceListResponse(BaseModel):
+    success: bool
+    voices: list[CareVoiceListItem]
+
+
 class UserVoiceDetailResponse(BaseModel):
     voice_id: int
     title: Optional[str] = None

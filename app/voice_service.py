@@ -274,6 +274,23 @@ class VoiceService:
                 "voices": []
             }
 
+    def get_care_voice_list(self, care_username: str, skip: int = 0, limit: int = 20) -> Dict[str, Any]:
+        """보호자 페이지: 연결된 사용자의 분석 완료 음성 목록 조회(페이징)"""
+        try:
+            voices = self.db_service.get_care_voices(care_username, skip=skip, limit=limit)
+            items = []
+            for v in voices:
+                created_at = v.created_at.isoformat() if v.created_at else ""
+                emotion = v.voice_analyze.top_emotion if v.voice_analyze else None
+                items.append({
+                    "voice_id": v.voice_id,
+                    "created_at": created_at,
+                    "emotion": emotion,
+                })
+            return {"success": True, "voices": items}
+        except Exception:
+            return {"success": False, "voices": []}
+
     def get_user_voice_detail(self, voice_id: int, username: str) -> Dict[str, Any]:
         """voice_id와 username으로 상세 정보 조회"""
         try:

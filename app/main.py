@@ -18,6 +18,7 @@ from .dto import (
     UserVoiceUploadRequest, UserVoiceUploadResponse,
     VoiceQuestionUploadResponse,
     UserVoiceListResponse, UserVoiceDetailResponse,
+    CareUserVoiceListResponse,
     EmotionAnalysisResponse, TranscribeResponse,
     SentimentResponse, EntitiesResponse, SyntaxResponse, ComprehensiveAnalysisResponse
 )
@@ -202,6 +203,15 @@ async def get_user_voice_list(username: str):
     )
 
 
+# GET : 보호자 페이지 - 연결 사용자 음성 리스트(분석 완료만)
+@app.get("/care/users/voices", response_model=CareUserVoiceListResponse)
+async def get_care_user_voice_list(care_username: str, skip: int = 0, limit: int = 20):
+    db = next(get_db())
+    voice_service = get_voice_service(db)
+    result = voice_service.get_care_voice_list(care_username, skip=skip, limit=limit)
+    return CareUserVoiceListResponse(success=result["success"], voices=result.get("voices", []))
+
+
 # GET : 사용자 음성 상세 조회
 @app.get("/users/voices/{voice_id}", response_model=UserVoiceDetailResponse)
 async def get_user_voice_detail(voice_id: int, username: str):
@@ -334,6 +344,26 @@ async def list_voices(skip: int = 0, limit: int = 50, folder: Optional[str] = No
     sliced = keys[skip: skip + limit]
     return {"items": sliced, "count": len(sliced), "next": skip + len(sliced)}
 
+
+# TEST: emotion_service 모델로 음성 감정 분석만 수행 (저장 없음)
+@app.post("/test/voice/analyze")
+async def test_emotion_analyze(file: UploadFile = File(...)):
+    """업로드된 파일을 emotion_service 모델로 분석하여 결과만 반환합니다."""
+    try:
+        data = await file.read()
+        from io import BytesIO
+
+        class FileWrapper:
+            def __init__(self, content, filename):
+                self.file = content
+                self.filename = filename
+                self.content_type = "audio/m4a" if filename.lower().endswith(".m4a") else "audio/wav"
+
+        wrapped = FileWrapper(BytesIO(data), file.filename)
+        result = analyze_voice_emotion(wrapped)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"emotion analyze failed: {str(e)}")
 
 # GET : query specific voice & show result
 @app.get("/voices/{voice_id}")
