@@ -23,6 +23,7 @@ from .dto import (
     SentimentResponse, EntitiesResponse, SyntaxResponse, ComprehensiveAnalysisResponse,
     VoiceAnalyzePreviewResponse
 )
+from .care_service import CareService
 
 app = FastAPI(title="Caring API")
 
@@ -191,6 +192,17 @@ async def get_care_user_voice_list(care_username: str, skip: int = 0, limit: int
     voice_service = get_voice_service(db)
     result = voice_service.get_care_voice_list(care_username, skip=skip, limit=limit)
     return CareUserVoiceListResponse(success=result["success"], voices=result.get("voices", []))
+
+@care_router.get("/users/voices/analyzing/frequency")
+async def get_emotion_monthly_frequency(
+    care_username: str, month: str
+):
+    """
+    보호자 페이지: 연결된 유저의 한달간 감정 빈도수 집계 (CareService 내부 로직 사용)
+    """
+    db = next(get_db())
+    care_service = CareService(db)
+    return care_service.get_emotion_monthly_frequency(care_username, month)
 
 # ============== nlp 영역 (구글 NLP) =============
 @nlp_router.post("/sentiment")
