@@ -9,7 +9,7 @@ from .emotion_service import analyze_voice_emotion
 from .stt_service import transcribe_voice
 from .nlp_service import analyze_text_sentiment, analyze_text_entities, analyze_text_syntax
 from .database import create_tables, engine, get_db
-from .models import Base
+from .models import Base, Question
 from .auth_service import get_auth_service
 from .voice_service import get_voice_service
 from .dto import (
@@ -24,6 +24,7 @@ from .dto import (
     VoiceAnalyzePreviewResponse
 )
 from .care_service import CareService
+import random
 
 app = FastAPI(title="Caring API")
 
@@ -32,6 +33,7 @@ care_router  = APIRouter(prefix="/care", tags=["care"])
 admin_router = APIRouter(prefix="/admin", tags=["admin"])
 nlp_router   = APIRouter(prefix="/nlp", tags=["nlp"])
 test_router  = APIRouter(prefix="/test", tags=["test"])
+questions_router = APIRouter(prefix="/questions", tags=["questions"])
 
 # Health
 @app.get("/health")
@@ -185,6 +187,32 @@ async def upload_voice_with_question(
     else:
         raise HTTPException(status_code=400, detail=result["message"])
 
+# 모든 질문 목록 반환
+@questions_router.get("")
+async def get_questions():
+    db = next(get_db())
+    questions = db.query(Question).all()
+    results = [
+        {"question_id": q.question_id, "question_category": q.question_category, "content": q.content}
+        for q in questions
+    ]
+    return {"success": True, "questions": results}
+
+# 질문 랜덤 반환
+@questions_router.get("/random")
+async def get_random_question():
+    db = next(get_db())
+    question_count = db.query(Question).count()
+    if question_count == 0:
+        return {"success": False, "question": None}
+    import random
+    offset = random.randint(0, question_count - 1)
+    q = db.query(Question).offset(offset).first()
+    if q:
+        result = {"question_id": q.question_id, "question_category": q.question_category, "content": q.content}
+        return {"success": True, "question": result}
+    return {"success": False, "question": None}
+
 # ============== care 영역 (보호자전용) =============
 @care_router.get("/users/voices", response_model=CareUserVoiceListResponse)
 async def get_care_user_voice_list(care_username: str, skip: int = 0, limit: int = 20):
@@ -302,3 +330,4 @@ app.include_router(care_router)
 app.include_router(admin_router)
 app.include_router(nlp_router)
 app.include_router(test_router)
+app.include_router(questions_router)
