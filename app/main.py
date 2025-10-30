@@ -232,6 +232,17 @@ async def get_emotion_monthly_frequency(
     care_service = CareService(db)
     return care_service.get_emotion_monthly_frequency(care_username, month)
 
+@care_router.get("/users/voices/analyzing/weekly")
+async def get_emotion_weekly_summary(
+    care_username: str,
+    month: str,
+    week: int
+):
+    """보호자페이지 - 연결유저 월/주차별 요일 top 감정 통계"""
+    db = next(get_db())
+    care_service = CareService(db)
+    return care_service.get_emotion_weekly_summary(care_username, month, week)
+
 # ============== nlp 영역 (구글 NLP) =============
 @nlp_router.post("/sentiment")
 async def analyze_sentiment(text: str, language_code: str = "ko"):
