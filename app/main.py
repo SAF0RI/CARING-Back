@@ -238,7 +238,14 @@ async def upload_voice_with_question(
     question_id: int = Form(...),
     username: str = None,
 ):
-    """질문과 함께 음성 파일 업로드 (S3 + DB 저장 + STT + voice_question 매핑)"""
+    """
+    질문과 함께 음성 파일 업로드
+
+    처리 흐름(비동기 후처리 포함):
+    - 즉시: S3 업로드, voice 생성, voice_question 매핑 저장 후 성공 응답 반환
+    - 백그라운드1: STT→텍스트 감정분석 실행 후 voice_content insert/update
+    - 백그라운드2: 음성 감정분석 실행 후 voice_analyze insert
+    """
     db = next(get_db())
     voice_service = get_voice_service(db)
     
@@ -258,52 +265,59 @@ async def upload_voice_with_question(
         raise HTTPException(status_code=400, detail=result["message"])
 
 
-# POST : upload voice with STT
-@app.post("/voices/upload")
-async def upload_voice(
-    file: UploadFile = File(...),
-    folder: Optional[str] = Form(default=None),
-    language_code: str = Form(default="ko-KR")
-):
-    """음성 파일을 업로드하고 STT를 수행합니다."""
-    bucket = os.getenv("S3_BUCKET_NAME")
-    if not bucket:
-        raise HTTPException(status_code=500, detail="S3_BUCKET_NAME not configured")
+# # POST : upload voice with STT
+# @app.post("/voices/upload")
+# async def upload_voice(
+#     file: UploadFile = File(...),
+#     folder: Optional[str] = Form(default=None),
+#     language_code: str = Form(default="ko-KR")
+# ):
+#     """
+#     음성 파일 업로드 및 STT 수행
 
-    # 파일 내용을 메모리에 읽기 (두 번 사용하기 위해)
-    file_content = await file.read()
-    
-    # S3 업로드
-    base_prefix = VOICE_BASE_PREFIX.rstrip("/")
-    effective_prefix = f"{base_prefix}/{folder or DEFAULT_UPLOAD_FOLDER}".rstrip("/")
-    key = f"{effective_prefix}/{file.filename}"
-    
-    from io import BytesIO
-    file_obj_for_s3 = BytesIO(file_content)
-    upload_fileobj(bucket=bucket, key=key, fileobj=file_obj_for_s3)
+#     참고: `/users/voices` 경로는 업로드와 동시에 비동기로
+#     - STT→텍스트 감정분석(`voice_content` 저장)
+#     - 음성 감정분석(`voice_analyze` 저장)
+#     를 실행합니다.
+#     """
+#     bucket = os.getenv("S3_BUCKET_NAME")
+#     if not bucket:
+#         raise HTTPException(status_code=500, detail="S3_BUCKET_NAME not configured")
 
-    # STT 변환 - 파일 내용을 직접 사용
-    from io import BytesIO
-    temp_file_obj = BytesIO(file_content)
+#     # 파일 내용을 메모리에 읽기 (두 번 사용하기 위해)
+#     file_content = await file.read()
     
-    # UploadFile과 유사한 객체 생성
-    class TempUploadFile:
-        def __init__(self, content, filename):
-            self.file = content
-            self.filename = filename
-            self.content_type = "audio/wav"
+#     # S3 업로드
+#     base_prefix = VOICE_BASE_PREFIX.rstrip("/")
+#     effective_prefix = f"{base_prefix}/{folder or DEFAULT_UPLOAD_FOLDER}".rstrip("/")
+#     key = f"{effective_prefix}/{file.filename}"
     
-    temp_upload_file = TempUploadFile(temp_file_obj, file.filename)
-    stt_result = transcribe_voice(temp_upload_file, language_code)
+#     from io import BytesIO
+#     file_obj_for_s3 = BytesIO(file_content)
+#     upload_fileobj(bucket=bucket, key=key, fileobj=file_obj_for_s3)
 
-    # 파일 목록 조회
-    names = list_bucket_objects(bucket=bucket, prefix=effective_prefix)
+#     # STT 변환 - 파일 내용을 직접 사용
+#     from io import BytesIO
+#     temp_file_obj = BytesIO(file_content)
     
-    return {
-        "uploaded": key,
-        "files": names,
-        "transcription": stt_result
-    }
+#     # UploadFile과 유사한 객체 생성
+#     class TempUploadFile:
+#         def __init__(self, content, filename):
+#             self.file = content
+#             self.filename = filename
+#             self.content_type = "audio/wav"
+    
+#     temp_upload_file = TempUploadFile(temp_file_obj, file.filename)
+#     stt_result = transcribe_voice(temp_upload_file, language_code)
+
+#     # 파일 목록 조회
+#     names = list_bucket_objects(bucket=bucket, prefix=effective_prefix)
+    
+#     return {
+#         "uploaded": key,
+#         "files": names,
+#         "transcription": stt_result
+#     }
 
 
 # GET : query my voice histories

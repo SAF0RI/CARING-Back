@@ -7,6 +7,7 @@ import asyncio
 from .s3_service import upload_fileobj
 from .stt_service import transcribe_voice
 from .nlp_service import analyze_text_sentiment
+from .emotion_service import analyze_voice_emotion
 from .constants import VOICE_BASE_PREFIX, DEFAULT_UPLOAD_FOLDER
 from .db_service import get_db_service
 from .auth_service import get_auth_service
@@ -77,8 +78,9 @@ class VoiceService:
                 sample_rate=16000  # 기본값
             )
             
-            # 5. STT → NLP 순차 처리 (백그라운드 비동기)
+            # 5. 비동기 후처리 (STT→NLP, 음성 감정 분석)
             asyncio.create_task(self._process_stt_and_nlp_background(file_content, file.filename, voice.voice_id))
+            asyncio.create_task(self._process_audio_emotion_background(file_content, file.filename, voice.voice_id))
             
             return {
                 "success": True,
@@ -140,6 +142,75 @@ class VoiceService:
             
         except Exception as e:
             print(f"STT → NLP 처리 중 오류 발생: {e}")
+
+    async def _process_audio_emotion_background(self, file_content: bytes, filename: str, voice_id: int):
+        """음성 파일 자체의 감정 분석을 백그라운드에서 수행하여 voice_analyze 저장"""
+        try:
+            file_obj = BytesIO(file_content)
+
+            class TempUploadFile:
+                def __init__(self, content, filename):
+                    self.file = content
+                    self.filename = filename
+                    self.content_type = "audio/m4a" if filename.endswith('.m4a') else "audio/wav"
+
+            emotion_file = TempUploadFile(file_obj, filename)
+            result = analyze_voice_emotion(emotion_file)
+
+            def to_bps(v: float) -> int:
+                try:
+                    return max(0, min(10000, int(round(float(v) * 10000))))
+                except Exception:
+                    return 0
+
+            probs = result.get("probabilities") or result.get("scores") or {}
+            happy = to_bps(probs.get("happy", probs.get("happiness", 0)))
+            sad = to_bps(probs.get("sad", probs.get("sadness", 0)))
+            neutral = to_bps(probs.get("neutral", 0))
+            angry = to_bps(probs.get("angry", probs.get("anger", 0)))
+            fear = to_bps(probs.get("fear", probs.get("fearful", 0)))
+
+            top_emotion = result.get("top_emotion") or result.get("label")
+            top_conf = result.get("top_confidence") or result.get("confidence", 0)
+            top_conf_bps = to_bps(top_conf)
+            model_version = result.get("model_version")
+
+            total_raw = happy + sad + neutral + angry + fear
+            if total_raw == 0:
+                # 모델이 확률을 반환하지 못한 경우: 중립 100%
+                happy, sad, neutral, angry, fear = 0, 0, 10000, 0, 0
+            else:
+                # 비율 보정(라운딩 후 합 10000로 맞춤)
+                scale = 10000 / float(total_raw)
+                vals = {
+                    "happy": int(round(happy * scale)),
+                    "sad": int(round(sad * scale)),
+                    "neutral": int(round(neutral * scale)),
+                    "angry": int(round(angry * scale)),
+                    "fear": int(round(fear * scale)),
+                }
+                diff = 10000 - sum(vals.values())
+                if diff != 0:
+                    # 가장 큰 항목에 차이를 보정(음수/양수 모두 처리)
+                    key_max = max(vals, key=lambda k: vals[k])
+                    vals[key_max] = max(0, min(10000, vals[key_max] + diff))
+                happy, sad, neutral, angry, fear = (
+                    vals["happy"], vals["sad"], vals["neutral"], vals["angry"], vals["fear"]
+                )
+
+            self.db_service.create_voice_analyze(
+                voice_id=voice_id,
+                happy_bps=happy,
+                sad_bps=sad,
+                neutral_bps=neutral,
+                angry_bps=angry,
+                fear_bps=fear,
+                top_emotion=top_emotion,
+                top_confidence_bps=top_conf_bps,
+                model_version=model_version,
+            )
+        except Exception as e:
+            print(f"Audio emotion background error: {e}")
     
     def get_user_voice_list(self, username: str) -> Dict[str, Any]:
         """
@@ -312,8 +383,9 @@ class VoiceService:
                 sample_rate=16000
             )
             
-            # 6. STT + NLP 순차 처리 (백그라운드 비동기)
+            # 6. 비동기 후처리 (STT→NLP, 음성 감정 분석)
             asyncio.create_task(self._process_stt_and_nlp_background(file_content, file.filename, voice.voice_id))
+            asyncio.create_task(self._process_audio_emotion_background(file_content, file.filename, voice.voice_id))
             
             # 7. Voice-Question 매핑 저장
             self.db_service.link_voice_question(voice.voice_id, question_id)
