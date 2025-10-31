@@ -3,7 +3,7 @@ from typing import Optional
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form, APIRouter
 from fastapi.responses import JSONResponse
 from typing import List
-from .s3_service import upload_fileobj, list_bucket_objects
+from .s3_service import upload_fileobj, list_bucket_objects, list_bucket_objects_with_urls
 from .constants import VOICE_BASE_PREFIX, DEFAULT_UPLOAD_FOLDER
 from .emotion_service import analyze_voice_emotion
 from .stt_service import transcribe_voice
@@ -187,6 +187,22 @@ async def upload_voice_with_question(
         )
     else:
         raise HTTPException(status_code=400, detail=result["message"])
+
+@users_router.get("/voices/s3-urls")
+async def get_s3_object_urls(expires_in: int = 3600):
+    """env(S3_LIST_PREFIX)에서 prefix를 읽어 presigned URL 목록 반환
+    fallback: VOICE_BASE_PREFIX/DEFAULT_UPLOAD_FOLDER
+    """
+    bucket = os.getenv("S3_BUCKET_NAME")
+    print(f"[S3] bucket={bucket}")
+    if not bucket:
+        raise HTTPException(status_code=500, detail="S3_BUCKET_NAME not configured")
+    prefix_env = os.getenv("S3_LIST_PREFIX")
+    if not prefix_env:
+        base_prefix = VOICE_BASE_PREFIX.rstrip("/")
+        prefix_env = f"{base_prefix}/{DEFAULT_UPLOAD_FOLDER}".rstrip("/")
+    urls = list_bucket_objects_with_urls(bucket=bucket, prefix=prefix_env, expires_in=expires_in)
+    return {"success": True, "prefix": prefix_env, "urls": urls}
 
 # 모든 질문 목록 반환
 @questions_router.get("")
@@ -378,6 +394,27 @@ async def test_emotion_analyze(file: UploadFile = File(...)):
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"emotion analyze failed: {str(e)}")
+
+@test_router.get("/s3-urls")
+async def test_s3_urls(limit: int = 10, expires_in: int = 3600):
+    """테스트: env prefix로 S3 presigned URL을 조회하고 샘플을 반환"""
+    bucket = os.getenv("S3_BUCKET_NAME")
+    print(f"[TEST] [S3] bucket={bucket}")
+    if not bucket:
+        raise HTTPException(status_code=500, detail="S3_BUCKET_NAME not configured")
+    prefix_env = os.getenv("S3_LIST_PREFIX")
+    if not prefix_env:
+        base_prefix = VOICE_BASE_PREFIX.rstrip("/")
+        prefix_env = f"{base_prefix}/{DEFAULT_UPLOAD_FOLDER}".rstrip("/")
+    urls = list_bucket_objects_with_urls(bucket=bucket, prefix=prefix_env, expires_in=expires_in)
+    items = list(urls.items())
+    sample = dict(items[: max(0, min(limit, len(items)))])
+    return {
+        "success": True,
+        "prefix": prefix_env,
+        "count": len(urls),
+        "sample": sample,
+    }
 
 # ---------------- router 등록 ----------------
 app.include_router(users_router)
