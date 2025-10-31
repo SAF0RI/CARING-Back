@@ -47,6 +47,7 @@ class Voice(Base):
     voice_content = relationship("VoiceContent", back_populates="voice", uselist=False, cascade="all, delete-orphan")
     voice_analyze = relationship("VoiceAnalyze", back_populates="voice", uselist=False, cascade="all, delete-orphan")
     questions = relationship("Question", secondary="voice_question", back_populates="voices")
+    voice_composite = relationship("VoiceComposite", back_populates="voice", uselist=False, cascade="all, delete-orphan")
     
     # 인덱스
     __table_args__ = (
@@ -138,4 +139,41 @@ class VoiceQuestion(Base):
     # 제약 조건
     __table_args__ = (
         UniqueConstraint('voice_id', 'question_id', name='uq_voice_question'),
+    )
+
+
+class VoiceComposite(Base):
+    """오디오/텍스트 융합 결과 저장 테이블"""
+    __tablename__ = "voice_composite"
+
+    voice_composite_id = Column(BigInteger, primary_key=True, autoincrement=True)
+    voice_id = Column(BigInteger, ForeignKey("voice.voice_id", ondelete="CASCADE"), nullable=False)
+
+    text_score_bps = Column(SmallInteger, nullable=True)
+    text_magnitude_x1000 = Column(Integer, nullable=True)
+
+    alpha_bps = Column(SmallInteger, nullable=True)
+    beta_bps = Column(SmallInteger, nullable=True)
+
+    valence_x1000 = Column(Integer, nullable=False)
+    arousal_x1000 = Column(Integer, nullable=False)
+    intensity_x1000 = Column(Integer, nullable=False)
+
+    happy_bps = Column(SmallInteger, nullable=False)
+    sad_bps = Column(SmallInteger, nullable=False)
+    neutral_bps = Column(SmallInteger, nullable=False)
+    angry_bps = Column(SmallInteger, nullable=False)
+    fear_bps = Column(SmallInteger, nullable=False)
+    surprise_bps = Column(SmallInteger, nullable=False)
+
+    top_emotion = Column(String(16), nullable=True)
+    top_emotion_confidence_bps = Column(SmallInteger, nullable=True)
+
+    created_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
+
+    # 관계
+    voice = relationship("Voice", back_populates="voice_composite", uselist=False)
+
+    __table_args__ = (
+        UniqueConstraint('voice_id', name='uq_vc_voice2'),
     )

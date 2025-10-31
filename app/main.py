@@ -25,6 +25,7 @@ from .dto import (
 )
 from .care_service import CareService
 import random
+from .routers import composite_router
 
 app = FastAPI(title="Caring API")
 
@@ -342,3 +343,4 @@ app.include_router(admin_router)
 app.include_router(nlp_router)
 app.include_router(test_router)
 app.include_router(questions_router)
+app.include_router(composite_router.router)
