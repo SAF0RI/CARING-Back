@@ -42,6 +42,21 @@ def list_bucket_objects(bucket: str, prefix: str = "") -> List[str]:
     return keys
 
 
+def get_presigned_url(bucket: str, key: str, expires_in: int = 3600) -> str:
+    """단일 S3 객체의 presigned URL 생성"""
+    s3 = get_s3_client()
+    try:
+        url = s3.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': bucket, 'Key': key},
+            ExpiresIn=expires_in
+        )
+        return url
+    except Exception as e:
+        print(f"Failed to generate presigned URL for {key}: {e}")
+        return ""
+
+
 def list_bucket_objects_with_urls(bucket: str, prefix: str = "", expires_in: int = 3600) -> Dict[str, str]:
     """
     prefix로 시작하는 S3 객체들의 키와 presigned URL을 반환
@@ -61,17 +76,8 @@ def list_bucket_objects_with_urls(bucket: str, prefix: str = "", expires_in: int
     for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
         for obj in page.get("Contents", []) or []:
             key = obj["Key"]
-            try:
-                url = s3.generate_presigned_url(
-                    'get_object',
-                    Params={'Bucket': bucket, 'Key': key},
-                    ExpiresIn=expires_in
-                )
-                result[key] = url
-            except Exception as e:
-                print(f"Failed to generate presigned URL for {key}: {e}")
-                # 실패 시 빈 문자열이나 None 대신 키 자체를 URL로 사용할 수도 있음
-                result[key] = ""
+            url = get_presigned_url(bucket, key, expires_in)
+            result[key] = url
     
     return result
 

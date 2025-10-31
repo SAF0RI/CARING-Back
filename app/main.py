@@ -156,6 +156,7 @@ async def get_user_voice_detail(voice_id: int, username: str):
         top_emotion=result.get("top_emotion"),
         created_at=result.get("created_at", ""),
         voice_content=result.get("voice_content"),
+        s3_url=result.get("s3_url"),
     )
 
 @users_router.delete("/voices/{voice_id}")

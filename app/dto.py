@@ -68,6 +68,7 @@ class VoiceListItem(BaseModel):
     emotion: Optional[str] = None
     question_title: Optional[str] = None
     content: str
+    s3_url: Optional[str] = None
 
 
 class UserVoiceListResponse(BaseModel):
@@ -92,6 +93,7 @@ class UserVoiceDetailResponse(BaseModel):
     top_emotion: Optional[str] = None
     created_at: str
     voice_content: Optional[str] = None
+    s3_url: Optional[str] = None
 
 
 class VoiceAnalyzePreviewResponse(BaseModel):

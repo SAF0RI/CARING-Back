@@ -8,7 +8,7 @@ import tempfile
 import librosa
 import soundfile as sf
 import numpy as np
-from .s3_service import upload_fileobj
+from .s3_service import upload_fileobj, get_presigned_url
 from .stt_service import transcribe_voice
 from .nlp_service import analyze_text_sentiment
 from .emotion_service import analyze_voice_emotion
@@ -322,6 +322,9 @@ class VoiceService:
             # 2. 사용자의 음성 목록 조회
             voices = self.db_service.get_voices_by_user(user.user_id)
             
+            # S3 버킷 정보
+            bucket = os.getenv("S3_BUCKET_NAME")
+            
             voice_list = []
             for voice in voices:
                 # 생성 날짜
@@ -343,12 +346,18 @@ class VoiceService:
                 if voice.voice_content and voice.voice_content.content:
                     content = voice.voice_content.content
                 
+                # S3 URL 생성
+                s3_url = None
+                if bucket and voice.voice_key:
+                    s3_url = get_presigned_url(bucket, voice.voice_key, expires_in=3600)
+                
                 voice_list.append({
                     "voice_id": voice.voice_id,
                     "created_at": created_at,
                     "emotion": emotion,
                     "question_title": question_title,
-                    "content": content
+                    "content": content,
+                    "s3_url": s3_url
                 })
             
             return {
@@ -400,12 +409,19 @@ class VoiceService:
             if voice.voice_content:
                 voice_content = voice.voice_content.content
 
+            # S3 URL 생성
+            bucket = os.getenv("S3_BUCKET_NAME")
+            s3_url = None
+            if bucket and voice.voice_key:
+                s3_url = get_presigned_url(bucket, voice.voice_key, expires_in=3600)
+
             return {
                 "success": True,
                 "title": title,
                 "top_emotion": top_emotion,
                 "created_at": created_at,
                 "voice_content": voice_content,
+                "s3_url": s3_url,
             }
         except Exception:
             return {"success": False, "error": "Failed to fetch voice detail"}
