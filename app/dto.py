@@ -63,6 +63,7 @@ class VoiceQuestionUploadResponse(BaseModel):
 
 
 class VoiceListItem(BaseModel):
+    voice_id: int
     created_at: str
     emotion: Optional[str] = None
     question_title: Optional[str] = None
@@ -72,6 +73,38 @@ class VoiceListItem(BaseModel):
 class UserVoiceListResponse(BaseModel):
     success: bool
     voices: list[VoiceListItem]
+
+
+class CareVoiceListItem(BaseModel):
+    voice_id: int
+    created_at: str
+    emotion: Optional[str] = None
+
+
+class CareUserVoiceListResponse(BaseModel):
+    success: bool
+    voices: list[CareVoiceListItem]
+
+
+class UserVoiceDetailResponse(BaseModel):
+    voice_id: int
+    title: Optional[str] = None
+    top_emotion: Optional[str] = None
+    created_at: str
+    voice_content: Optional[str] = None
+
+
+class VoiceAnalyzePreviewResponse(BaseModel):
+    voice_id: Optional[int] = None
+    happy_bps: int
+    sad_bps: int
+    neutral_bps: int
+    angry_bps: int
+    fear_bps: int
+    surprise_bps: int
+    top_emotion: Optional[str] = None
+    top_confidence_bps: Optional[int] = None
+    model_version: Optional[str] = None
 
 
 class VoiceDetailResponse(BaseModel):

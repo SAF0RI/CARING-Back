@@ -29,6 +29,15 @@ uvicorn app.main:app --reload --port 8000
 
 API 문서: `http://127.0.0.1:8000/docs`
 
+### 비동기 처리 흐름(업로드 이후)
+
+업로드 API(`/users/voices`) 호출 후 서버는 다음을 비동기로 수행합니다.
+
+- STT → 텍스트 감정 분석 → `voice_content` 저장
+- 음성 감정 분석(오디오 자체) → `voice_analyze` 저장
+
+응답은 업로드 및 메타/매핑 저장 후 즉시 반환되며, 분석 결과는 나중에 조회 API에서 확인할 수 있습니다.
+
 ### Docker를 사용한 실행
 
 #### 1. 환경 변수 설정
