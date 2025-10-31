@@ -49,6 +49,10 @@ class EmotionAnalyzer:
             }
         
         try:
+            try:
+                print(f"[emotion] start analyze filename={getattr(audio_file,'filename',None)}", flush=True)
+            except Exception:
+                pass
             # 업로드 확장자 반영하여 임시 파일로 저장
             import os
             orig_name = getattr(audio_file, "filename", "") or ""
@@ -59,6 +63,12 @@ class EmotionAnalyzer:
                 audio_file.file.seek(0)
                 tmp_file.write(content)
                 tmp_file_path = tmp_file.name
+            try:
+                import os as _os
+                sz = _os.path.getsize(tmp_file_path)
+                print(f"[emotion] tmp saved path={tmp_file_path} size={sz}", flush=True)
+            except Exception:
+                pass
             
             # 오디오 로드 (16kHz, 견고한 로더)
             def robust_load(path: str, target_sr: int = 16000):
@@ -71,28 +81,57 @@ class EmotionAnalyzer:
                     if sr != target_sr:
                         data = librosa.resample(data, orig_sr=sr, target_sr=target_sr)
                         sr = target_sr
+                    try:
+                        print(f"[emotion] robust_load: backend=sf sr={sr} len={len(data)} min={float(np.min(data)):.4f} max={float(np.max(data)):.4f}", flush=True)
+                    except Exception:
+                        pass
                     return data, sr
                 except Exception:
                     y, sr = librosa.load(path, sr=target_sr, mono=True)
-                    return y.astype("float32"), sr
+                    y = y.astype("float32")
+                    try:
+                        print(f"[emotion] robust_load: backend=librosa sr={sr} len={len(y)} min={float(np.min(y)):.4f} max={float(np.max(y)):.4f}", flush=True)
+                    except Exception:
+                        pass
+                    return y, sr
 
             audio, sr = robust_load(tmp_file_path, 16000)
+            try:
+                a_min = float(np.min(audio)) if len(audio) else 0.0
+                a_max = float(np.max(audio)) if len(audio) else 0.0
+                print(f"[emotion] load ok file={orig_name} sr={sr} len={len(audio)} dur={len(audio)/float(sr):.3f}s range=[{a_min:.4f},{a_max:.4f}]", flush=True)
+            except Exception as e:
+                print(f"[emotion] load log err: {e}", flush=True)
             
             # 특성 추출
-            inputs = self.feature_extractor(
-                audio, 
-                sampling_rate=16000, 
-                return_tensors="pt", 
-                padding=True
-            )
+            try:
+                inputs = self.feature_extractor(
+                    audio,
+                    sampling_rate=16000,
+                    return_tensors="pt",
+                    padding=True,
+                )
+                lens = {k: tuple(v.shape) for k, v in inputs.items()}
+                print(f"[emotion] extract ok shapes={lens}", flush=True)
+            except Exception as e:
+                print(f"[emotion] extract error: {e}", flush=True)
+                raise
             
             # GPU로 이동
             inputs = {k: v.to(self.device) for k, v in inputs.items()}
             
             # 추론
-            with torch.no_grad():
-                outputs = self.model(**inputs)
-                predictions = torch.nn.functional.softmax(outputs.logits, dim=-1)
+            try:
+                with torch.no_grad():
+                    outputs = self.model(**inputs)
+                    logits = outputs.logits
+                    predictions = torch.nn.functional.softmax(logits, dim=-1)
+                print(f"[emotion] forward ok logits_shape={tuple(logits.shape)}", flush=True)
+                probs = predictions[0].detach().cpu().numpy().tolist()
+                print(f"[emotion] probs size={len(probs)} sum={round(float(np.sum(probs)),4)} top={int(np.argmax(probs))} max={round(float(np.max(probs)),4)}", flush=True)
+            except Exception as e:
+                print(f"[emotion] forward error: {e}", flush=True)
+                raise
             
             # 감정 라벨 매핑: 모델 config 우선, 숫자형 값이면 사람이 읽을 수 있는 이름으로 대체
             default_labels = ["neutral", "happy", "sad", "angry", "fear", "surprise"]
@@ -117,6 +156,11 @@ class EmotionAnalyzer:
                 emotion_labels[i]: predictions[0][i].item()
                 for i in range(min(len(emotion_labels), predictions.shape[1]))
             }
+            try:
+                dbg_scores = {k: round(v, 4) for k, v in list(emotion_scores.items())}
+                print(f"[emotion] scores={dbg_scores} top={emotion} conf={confidence:.4f}")
+            except Exception:
+                pass
             
             # 한국어 라벨 → 영어 라벨 매핑
             ko2en = {
@@ -141,16 +185,25 @@ class EmotionAnalyzer:
             emotion_en = to_en(emotion)
             emotion_scores_en = {to_en(k): v for k, v in emotion_scores.items()}
 
+            # 모델 버전 표기(추적용)
+            model_version = None
+            try:
+                model_version = getattr(self.model.config, "name_or_path", None) or "unknown"
+            except Exception:
+                model_version = "unknown"
+
             return {
                 "emotion": emotion_en,                 # 대표 감정 (영문)
                 "top_emotion": emotion_en,             # 동일 표기(영문)
                 "confidence": confidence,              # 대표 감정 확률
                 "emotion_scores": emotion_scores_en,   # 영문 라벨명→확률
                 "audio_duration": len(audio) / sr,
-                "sample_rate": sr
+                "sample_rate": sr,
+                "model_version": model_version,
             }
             
         except Exception as e:
+            print(f"[emotion] analyze error: {e} filename={getattr(audio_file,'filename',None)}")
             return {
                 "error": f"분석 중 오류 발생: {str(e)}",
                 "emotion": "unknown",

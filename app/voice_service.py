@@ -157,6 +157,16 @@ class VoiceService:
             emotion_file = TempUploadFile(file_obj, filename)
             result = analyze_voice_emotion(emotion_file)
 
+            # 디버그 로그: 전체 결과 요약
+            try:
+                top_em = result.get('top_emotion') or result.get('emotion')
+                conf = result.get('confidence')
+                mv = result.get('model_version')
+                em_scores = result.get('emotion_scores') or {}
+                print(f"[emotion] result voice_id={voice_id} top={top_em} conf={conf} model={mv} scores={{{k: round(float(v),4) for k,v in em_scores.items()}}}", flush=True)
+            except Exception:
+                pass
+
             def to_bps(v: float) -> int:
                 try:
                     return max(0, min(10000, int(round(float(v) * 10000))))
@@ -176,6 +186,8 @@ class VoiceService:
             top_conf = result.get("top_confidence") or result.get("confidence", 0)
             top_conf_bps = to_bps(top_conf)
             model_version = result.get("model_version")
+            if isinstance(model_version, str) and len(model_version) > 32:
+                model_version = model_version[:32]
 
             total_raw = happy + sad + neutral + angry + fear + surprise
             print(f"[voice_analyze] ROUND 이전: happy={happy}, sad={sad}, neutral={neutral}, angry={angry}, fear={fear}, surprise={surprise} → 합계={total_raw}")
@@ -210,6 +222,16 @@ class VoiceService:
                     vals["happy"], vals["sad"], vals["neutral"], vals["angry"], vals["fear"], vals["surprise"]
                 )
 
+            # DB 저장 직전 값 로깅
+            try:
+                print(
+                    f"[voice_analyze] to_db voice_id={voice_id} "
+                    f"vals={{'happy': {happy}, 'sad': {sad}, 'neutral': {neutral}, 'angry': {angry}, 'fear': {fear}, 'surprise': {surprise}}} "
+                    f"top={top_emotion} conf_bps={top_conf_bps} model={model_version}"
+                )
+            except Exception:
+                pass
+
             self.db_service.create_voice_analyze(
                 voice_id=voice_id,
                 happy_bps=happy,
@@ -222,8 +244,9 @@ class VoiceService:
                 top_confidence_bps=top_conf_bps,
                 model_version=model_version,
             )
+            print(f"[voice_analyze] saved voice_id={voice_id} top={top_emotion} conf_bps={top_conf_bps}", flush=True)
         except Exception as e:
-            print(f"Audio emotion background error: {e}")
+            print(f"Audio emotion background error: {e}", flush=True)
     
     def get_user_voice_list(self, username: str) -> Dict[str, Any]:
         """
