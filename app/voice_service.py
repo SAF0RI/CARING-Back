@@ -1,9 +1,13 @@
 import os
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 from sqlalchemy.orm import Session
 from fastapi import UploadFile, HTTPException
 from io import BytesIO
 import asyncio
+import tempfile
+import librosa
+import soundfile as sf
+import numpy as np
 from .s3_service import upload_fileobj
 from .stt_service import transcribe_voice
 from .nlp_service import analyze_text_sentiment
@@ -22,9 +26,45 @@ class VoiceService:
         self.db_service = get_db_service(db)
         self.auth_service = get_auth_service(db)
     
+    def _convert_to_wav(self, file_content: bytes, original_filename: str) -> Tuple[bytes, str]:
+        """Convert any audio to WAV format (16kHz, mono)"""
+        tmp_input = None
+        tmp_output = None
+        try:
+            ext = original_filename.rsplit('.', 1)[-1].lower() if '.' in original_filename else 'wav'
+            tmp_input = tempfile.NamedTemporaryFile(suffix=f'.{ext}', delete=False)
+            tmp_input.write(file_content)
+            tmp_input.flush()
+
+            audio, sr = librosa.load(tmp_input.name, sr=16000, mono=True)
+            audio = np.clip(audio, -1.0, 1.0)
+
+            tmp_output = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+            sf.write(tmp_output.name, audio, 16000, format='WAV')
+
+            with open(tmp_output.name, 'rb') as f:
+                wav_bytes = f.read()
+
+            base_name = original_filename.rsplit('.', 1)[0] if '.' in original_filename else original_filename
+            wav_filename = f"{base_name}.wav"
+
+            return wav_bytes, wav_filename
+        finally:
+            if tmp_input:
+                try:
+                    os.unlink(tmp_input.name)
+                except:
+                    pass
+            if tmp_output:
+                try:
+                    os.unlink(tmp_output.name)
+                except:
+                    pass
+    
     async def upload_user_voice(self, file: UploadFile, username: str) -> Dict[str, Any]:
         """
         사용자 음성 파일 업로드 (S3 + DB 저장)
+        모든 파일은 WAV로 변환 후 처리
         
         Args:
             file: 업로드된 음성 파일
@@ -49,7 +89,11 @@ class VoiceService:
                     "message": "Only .wav and .m4a files are allowed"
                 }
             
-            # 3. S3 업로드
+            # 3. 파일 읽기 및 WAV 변환
+            file_content = await file.read()
+            wav_content, wav_filename = self._convert_to_wav(file_content, file.filename)
+            
+            # 4. S3 업로드 (WAV 파일)
             bucket = os.getenv("S3_BUCKET_NAME")
             if not bucket:
                 return {
@@ -57,23 +101,22 @@ class VoiceService:
                     "message": "S3_BUCKET_NAME not configured"
                 }
             
-            file_content = await file.read()
             base_prefix = VOICE_BASE_PREFIX.rstrip("/")
             effective_prefix = f"{base_prefix}/{DEFAULT_UPLOAD_FOLDER}".rstrip("/")
-            key = f"{effective_prefix}/{file.filename}"
+            key = f"{effective_prefix}/{wav_filename}"
             
-            file_obj_for_s3 = BytesIO(file_content)
+            file_obj_for_s3 = BytesIO(wav_content)
             upload_fileobj(bucket=bucket, key=key, fileobj=file_obj_for_s3)
             
-            # 4. 데이터베이스 저장 (기본 정보만)
+            # 5. 데이터베이스 저장 (기본 정보만)
             # 파일 크기로 대략적인 duration 추정
-            file_size_mb = len(file_content) / (1024 * 1024)
+            file_size_mb = len(wav_content) / (1024 * 1024)
             estimated_duration_ms = int(file_size_mb * 1000)  # 대략적인 추정
             
             # Voice 저장 (STT 없이 기본 정보만)
             voice = self.db_service.create_voice(
                 voice_key=key,
-                voice_name=file.filename,
+                voice_name=wav_filename,
                 duration_ms=estimated_duration_ms,
                 user_id=user.user_id,
                 sample_rate=16000  # 기본값
@@ -81,9 +124,9 @@ class VoiceService:
             # ensure job row
             ensure_job_row(self.db, voice.voice_id)
             
-            # 5. 비동기 후처리 (STT→NLP, 음성 감정 분석)
-            asyncio.create_task(self._process_stt_and_nlp_background(file_content, file.filename, voice.voice_id))
-            asyncio.create_task(self._process_audio_emotion_background(file_content, file.filename, voice.voice_id))
+            # 6. 비동기 후처리 (STT→NLP, 음성 감정 분석) - WAV 데이터 사용
+            asyncio.create_task(self._process_stt_and_nlp_background(wav_content, wav_filename, voice.voice_id))
+            asyncio.create_task(self._process_audio_emotion_background(wav_content, wav_filename, voice.voice_id))
             
             return {
                 "success": True,
@@ -384,6 +427,7 @@ class VoiceService:
     async def upload_voice_with_question(self, file: UploadFile, username: str, question_id: int) -> Dict[str, Any]:
         """
         질문과 함께 음성 파일 업로드 (S3 + DB 저장 + STT + voice_question 매핑)
+        모든 파일은 WAV로 변환 후 처리
         
         Args:
             file: 업로드된 음성 파일
@@ -417,7 +461,11 @@ class VoiceService:
                     "message": "Only .wav and .m4a files are allowed"
                 }
             
-            # 4. S3 업로드
+            # 4. 파일 읽기 및 WAV 변환
+            file_content = await file.read()
+            wav_content, wav_filename = self._convert_to_wav(file_content, file.filename)
+            
+            # 5. S3 업로드 (WAV 파일)
             bucket = os.getenv("S3_BUCKET_NAME")
             if not bucket:
                 return {
@@ -425,21 +473,20 @@ class VoiceService:
                     "message": "S3_BUCKET_NAME not configured"
                 }
             
-            file_content = await file.read()
             base_prefix = VOICE_BASE_PREFIX.rstrip("/")
             effective_prefix = f"{base_prefix}/{DEFAULT_UPLOAD_FOLDER}".rstrip("/")
-            key = f"{effective_prefix}/{file.filename}"
+            key = f"{effective_prefix}/{wav_filename}"
             
-            file_obj_for_s3 = BytesIO(file_content)
+            file_obj_for_s3 = BytesIO(wav_content)
             upload_fileobj(bucket=bucket, key=key, fileobj=file_obj_for_s3)
             
-            # 5. 데이터베이스 저장 (기본 정보만)
-            file_size_mb = len(file_content) / (1024 * 1024)
+            # 6. 데이터베이스 저장 (기본 정보만)
+            file_size_mb = len(wav_content) / (1024 * 1024)
             estimated_duration_ms = int(file_size_mb * 1000)
             
             voice = self.db_service.create_voice(
                 voice_key=key,
-                voice_name=file.filename,
+                voice_name=wav_filename,
                 duration_ms=estimated_duration_ms,
                 user_id=user.user_id,
                 sample_rate=16000
@@ -447,11 +494,11 @@ class VoiceService:
             # ensure job row
             ensure_job_row(self.db, voice.voice_id)
             
-            # 6. 비동기 후처리 (STT→NLP, 음성 감정 분석)
-            asyncio.create_task(self._process_stt_and_nlp_background(file_content, file.filename, voice.voice_id))
-            asyncio.create_task(self._process_audio_emotion_background(file_content, file.filename, voice.voice_id))
+            # 7. 비동기 후처리 (STT→NLP, 음성 감정 분석) - WAV 데이터 사용
+            asyncio.create_task(self._process_stt_and_nlp_background(wav_content, wav_filename, voice.voice_id))
+            asyncio.create_task(self._process_audio_emotion_background(wav_content, wav_filename, voice.voice_id))
             
-            # 7. Voice-Question 매핑 저장
+            # 8. Voice-Question 매핑 저장
             self.db_service.link_voice_question(voice.voice_id, question_id)
             
             return {
