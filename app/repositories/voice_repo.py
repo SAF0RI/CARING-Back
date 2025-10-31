@@ -40,7 +40,7 @@ def get_text_sentiment_by_voice_id(session: Session, voice_id: int) -> Tuple[flo
         return 0.0, 0.0
     try:
         score_bps = vc.score_bps if vc.score_bps is not None else 0
-        score = float(score_bps) / 5000.0 - 1.0
+        score = float(score_bps) / 10000.0 
     except Exception:
         score = 0.0
     try:

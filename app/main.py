@@ -9,7 +9,7 @@ from .emotion_service import analyze_voice_emotion
 from .stt_service import transcribe_voice
 from .nlp_service import analyze_text_sentiment, analyze_text_entities, analyze_text_syntax
 from .database import create_tables, engine, get_db
-from .models import Base, Question
+from .models import Base, Question, VoiceComposite
 from .auth_service import get_auth_service
 from .voice_service import get_voice_service
 from .dto import (
@@ -243,6 +243,54 @@ async def get_emotion_weekly_summary(
     db = next(get_db())
     care_service = CareService(db)
     return care_service.get_emotion_weekly_summary(care_username, month, week)
+
+@care_router.get("/voices/{voice_id}/composite")
+async def get_care_voice_composite(voice_id: int, care_username: str):
+    """보호자 페이지: 특정 음성의 융합 지표 조회 (감정 퍼센트 포함)
+    - care_username 검증: CARE 역할이며 연결된 user의 voice인지 확인
+    """
+    db = next(get_db())
+
+    # 보호자 검증 및 연결 유저 확인
+    auth_service = get_auth_service(db)
+    care_user = auth_service.get_user_by_username(care_username)
+    if not care_user or care_user.role != 'CARE' or not care_user.connecting_user_code:
+        raise HTTPException(status_code=400, detail="invalid care user or not connected")
+    connected_user = auth_service.get_user_by_code(care_user.connecting_user_code)
+    if not connected_user:
+        raise HTTPException(status_code=400, detail="connected user not found")
+
+    # voice 소유권 검증
+    from .models import Voice
+    voice = db.query(Voice).filter(Voice.voice_id == voice_id).first()
+    if not voice or voice.user_id != connected_user.user_id:
+        raise HTTPException(status_code=403, detail="forbidden: not owned by connected user")
+
+    row = db.query(VoiceComposite).filter(VoiceComposite.voice_id == voice_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="not found")
+
+    def pct(bps: int | None) -> int:
+        return int(round((bps or 0) / 100))
+
+    return {
+        "voice_id": voice_id,
+        "valence_x1000": row.valence_x1000,
+        "arousal_x1000": row.arousal_x1000,
+        "intensity_x1000": row.intensity_x1000,
+        "alpha_bps": row.alpha_bps or 0,
+        "beta_bps": row.beta_bps or 0,
+        # *_bps fields are hidden per design
+        "happy_pct": pct(row.happy_bps),
+        "sad_pct": pct(row.sad_bps),
+        "neutral_pct": pct(row.neutral_bps),
+        "angry_pct": pct(row.angry_bps),
+        "fear_pct": pct(row.fear_bps),
+        "surprise_pct": pct(row.surprise_bps),
+        "top_emotion": row.top_emotion,
+        "top_emotion_confidence_bps": row.top_emotion_confidence_bps or 0,
+        "top_emotion_confidence_pct": pct(row.top_emotion_confidence_bps or 0),
+    }
 
 # ============== nlp 영역 (구글 NLP) =============
 @nlp_router.post("/sentiment")

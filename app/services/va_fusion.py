@@ -137,7 +137,26 @@ def fuse_VA(audio_probs: Dict[str, float], text_score: float, text_magnitude: fl
     sims: Dict[str, float] = {}
     for emo, (v_e, a_e) in EMOTION_VA.items():
         sims[emo] = _cosine_similarity((v_final, a_final), (v_e, a_e))
+    # surprise down-weighting before normalization
+    sims["surprise"] = sims.get("surprise", 0.0) * 0.3
     per_emotion_bps = _normalize_to_bps(sims)
+
+    # optional cap after normalization (e.g., surprise <= 10%)
+    cap = 1000  # adjust if needed
+    sur = per_emotion_bps.get("surprise", 0)
+    if sur > cap:
+        over = sur - cap
+        per_emotion_bps["surprise"] = cap
+        others = {k: v for k, v in per_emotion_bps.items() if k != "surprise" and v > 0}
+        total_others = sum(others.values()) or 1
+        for k in others:
+            inc = round(over * (per_emotion_bps[k] / total_others))
+            per_emotion_bps[k] += int(inc)
+        # rounding diff fix
+        diff = 10000 - sum(per_emotion_bps.values())
+        if diff != 0 and per_emotion_bps:
+            kmax = max(per_emotion_bps, key=lambda k: per_emotion_bps[k])
+            per_emotion_bps[kmax] += diff
 
     # Top emotion/confidence
     if per_emotion_bps:
