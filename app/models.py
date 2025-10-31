@@ -91,6 +91,7 @@ class VoiceAnalyze(Base):
     neutral_bps = Column(SmallInteger, nullable=False)  # 0~10000
     angry_bps = Column(SmallInteger, nullable=False)  # 0~10000
     fear_bps = Column(SmallInteger, nullable=False)  # 0~10000
+    surprise_bps = Column(SmallInteger, nullable=False, default=0)  # 0~10000
     top_emotion = Column(String(16), nullable=True)  # 'neutral' 등
     top_confidence_bps = Column(SmallInteger, nullable=True)  # 0~10000
     model_version = Column(String(32), nullable=True)
@@ -102,8 +103,8 @@ class VoiceAnalyze(Base):
     # 제약 조건
     __table_args__ = (
         UniqueConstraint('voice_id', name='uq_va_voice'),
-        CheckConstraint("happy_bps <= 10000 AND sad_bps <= 10000 AND neutral_bps <= 10000 AND angry_bps <= 10000 AND fear_bps <= 10000", name='check_emotion_bps_range'),
-        CheckConstraint("happy_bps + sad_bps + neutral_bps + angry_bps + fear_bps = 10000", name='check_emotion_bps_sum'),
+        CheckConstraint("happy_bps <= 10000 AND sad_bps <= 10000 AND neutral_bps <= 10000 AND angry_bps <= 10000 AND fear_bps <= 10000 AND surprise_bps <= 10000", name='check_emotion_bps_range'),
+        CheckConstraint("happy_bps + sad_bps + neutral_bps + angry_bps + fear_bps + surprise_bps = 10000", name='check_emotion_bps_sum'),
     )
 
 

@@ -6,6 +6,7 @@ from google.cloud import speech
 from google.oauth2 import service_account
 import librosa
 import numpy as np
+import soundfile as sf
 
 
 class GoogleSTTService:
@@ -53,15 +54,36 @@ class GoogleSTTService:
             }
         
         try:
-            # 임시 파일로 저장
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
+            # 업로드 확장자에 맞춰 임시 파일로 저장 (기본: .wav)
+            orig_name = getattr(audio_file, "filename", "") or ""
+            _, ext = os.path.splitext(orig_name)
+            suffix = ext if ext.lower() in [".wav", ".m4a", ".mp3", ".flac", ".ogg", ".aac", ".caf"] else ".wav"
+
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp_file:
                 content = audio_file.file.read()
                 audio_file.file.seek(0)
                 tmp_file.write(content)
                 tmp_file_path = tmp_file.name
             
-            # 오디오 파일 로드 및 전처리
-            audio_data, sample_rate = librosa.load(tmp_file_path, sr=16000)
+            # 오디오 파일 로드 및 전처리 (견고한 로더)
+            def robust_load(path: str, target_sr: int = 16000):
+                """soundfile 우선, 실패 시 librosa로 폴백. 모노, 정규화 반환."""
+                try:
+                    data, sr = sf.read(path, always_2d=True, dtype="float32")  # (N, C)
+                    if data.ndim == 2 and data.shape[1] > 1:
+                        data = data.mean(axis=1)  # mono
+                    else:
+                        data = data.reshape(-1)
+                    if sr != target_sr:
+                        data = librosa.resample(data, orig_sr=sr, target_sr=target_sr)
+                        sr = target_sr
+                    return data, sr
+                except Exception:
+                    # 폴백: librosa가 내부적으로 audioread/ffmpeg 사용
+                    y, sr = librosa.load(path, sr=target_sr, mono=True)
+                    return y.astype("float32"), sr
+
+            audio_data, sample_rate = robust_load(tmp_file_path, 16000)
             
             # 오디오 데이터를 bytes로 변환
             audio_data = np.clip(audio_data, -1.0, 1.0)

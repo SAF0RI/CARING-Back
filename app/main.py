@@ -1,6 +1,6 @@
 import os
 from typing import Optional
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, APIRouter
 from fastapi.responses import JSONResponse
 from typing import List
 from .s3_service import upload_fileobj, list_bucket_objects
@@ -9,7 +9,7 @@ from .emotion_service import analyze_voice_emotion
 from .stt_service import transcribe_voice
 from .nlp_service import analyze_text_sentiment, analyze_text_entities, analyze_text_syntax
 from .database import create_tables, engine, get_db
-from .models import Base
+from .models import Base, Question
 from .auth_service import get_auth_service
 from .voice_service import get_voice_service
 from .dto import (
@@ -17,108 +17,85 @@ from .dto import (
     SigninRequest, SigninResponse,
     UserVoiceUploadRequest, UserVoiceUploadResponse,
     VoiceQuestionUploadResponse,
-    UserVoiceListResponse,
+    UserVoiceListResponse, UserVoiceDetailResponse,
+    CareUserVoiceListResponse,
     EmotionAnalysisResponse, TranscribeResponse,
-    SentimentResponse, EntitiesResponse, SyntaxResponse, ComprehensiveAnalysisResponse
+    SentimentResponse, EntitiesResponse, SyntaxResponse, ComprehensiveAnalysisResponse,
+    VoiceAnalyzePreviewResponse
 )
+from .care_service import CareService
+import random
 
 app = FastAPI(title="Caring API")
 
+users_router = APIRouter(prefix="/users", tags=["users"])
+care_router  = APIRouter(prefix="/care", tags=["care"])
+admin_router = APIRouter(prefix="/admin", tags=["admin"])
+nlp_router   = APIRouter(prefix="/nlp", tags=["nlp"])
+test_router  = APIRouter(prefix="/test", tags=["test"])
+questions_router = APIRouter(prefix="/questions", tags=["questions"])
 
+# Health
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
-
-# ==================== 데이터베이스 관리 API ====================
-
-@app.post("/admin/db/migrate")
+# ============ Admin 영역 ============
+@admin_router.post("/db/migrate")
 async def run_migration():
-    """데이터베이스 마이그레이션 실행"""
     try:
         from alembic import command
         from alembic.config import Config
-        
         print("🔄 마이그레이션 실행 중...")
         alembic_cfg = Config("alembic.ini")
         command.upgrade(alembic_cfg, "head")
-        
-        return {
-            "success": True,
-            "message": "마이그레이션이 성공적으로 실행되었습니다."
-        }
+        return {"success": True, "message": "마이그레이션이 성공적으로 실행되었습니다."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"마이그레이션 실패: {str(e)}")
 
-
-@app.post("/admin/db/init")
+@admin_router.post("/db/init")
 async def init_database():
-    """데이터베이스 초기화 (테이블 생성)"""
     try:
         from sqlalchemy import inspect
         inspector = inspect(engine)
         existing_tables = inspector.get_table_names()
         all_tables = set(Base.metadata.tables.keys())
         missing_tables = all_tables - set(existing_tables)
-        
         if missing_tables:
             print(f"🔨 테이블 생성 중: {', '.join(missing_tables)}")
             table_order = ['user', 'voice', 'voice_content', 'voice_analyze', 'question', 'voice_question']
-            
             for table_name in table_order:
                 if table_name in missing_tables:
                     table = Base.metadata.tables[table_name]
                     table.create(bind=engine, checkfirst=True)
-            
             other_tables = missing_tables - set(table_order)
             if other_tables:
                 for table_name in other_tables:
                     table = Base.metadata.tables[table_name]
                     table.create(bind=engine, checkfirst=True)
-            
-            return {
-                "success": True,
-                "message": "테이블이 생성되었습니다.",
-                "created_tables": list(missing_tables)
-            }
+            return {"success": True, "message": "테이블이 생성되었습니다.", "created_tables": list(missing_tables)}
         else:
-            return {
-                "success": True,
-                "message": "모든 테이블이 이미 존재합니다."
-            }
+            return {"success": True, "message": "모든 테이블이 이미 존재합니다."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"데이터베이스 초기화 실패: {str(e)}")
 
-
-@app.get("/admin/db/status")
+@admin_router.get("/db/status")
 async def get_database_status():
-    """데이터베이스 상태 확인"""
     try:
         from sqlalchemy import inspect
         inspector = inspect(engine)
         existing_tables = inspector.get_table_names()
         all_tables = set(Base.metadata.tables.keys())
         missing_tables = all_tables - set(existing_tables)
-        
-        return {
-            "success": True,
-            "total_tables": len(all_tables),
-            "existing_tables": existing_tables,
-            "missing_tables": list(missing_tables),
-            "is_sync": len(missing_tables) == 0
-        }
+        return {"success": True, "total_tables": len(all_tables), "existing_tables": existing_tables, "missing_tables": list(missing_tables), "is_sync": len(missing_tables) == 0}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"상태 확인 실패: {str(e)}")
 
-# --------------------------------------auth API--------------------------------------
-
-# POST : 회원가입
+# ============ Auth 전용(signup, signin)은 루트에 남김 ===========
 @app.post("/sign-up", response_model=SignupResponse)
 async def sign_up(request: SignupRequest):
-    """회원가입 API"""
     db = next(get_db())
     auth_service = get_auth_service(db)
-    
     result = auth_service.signup(
         name=request.name,
         birthdate=request.birthdate,
@@ -127,7 +104,6 @@ async def sign_up(request: SignupRequest):
         role=request.role,
         connecting_user_code=request.connecting_user_code
     )
-    
     if result["success"]:
         return SignupResponse(
             message="회원가입이 완료되었습니다.",
@@ -139,20 +115,15 @@ async def sign_up(request: SignupRequest):
     else:
         raise HTTPException(status_code=400, detail=result["error"])
 
-
-# POST : 로그인
 @app.post("/sign-in", response_model=SigninResponse)
 async def sign_in(request: SigninRequest, role: str):
-    """로그인 API (role은 Request Parameter)"""
     db = next(get_db())
     auth_service = get_auth_service(db)
-    
     result = auth_service.signin(
         username=request.username,
         password=request.password,
         role=role
     )
-    
     if result["success"]:
         return SigninResponse(
             message="로그인 성공",
@@ -163,58 +134,49 @@ async def sign_in(request: SigninRequest, role: str):
     else:
         raise HTTPException(status_code=401, detail=result["error"])
 
-
-# POST : 사용자 음성 업로드
-# @app.post("/users/voices", response_model=UserVoiceUploadResponse)
-# async def upload_user_voice(
-#     file: UploadFile = File(...),
-#     username: str = Form(...)
-# ):
-#     """사용자 음성 파일 업로드 (S3 + DB 저장)"""
-#     db = next(get_db())
-#     voice_service = get_voice_service(db)
-    
-#     result = await voice_service.upload_user_voice(file, username)
-    
-#     if result["success"]:
-#         return UserVoiceUploadResponse(
-#             success=True,
-#             message=result["message"],
-#             voice_id=result.get("voice_id")
-#         )
-#     else:
-#         raise HTTPException(status_code=400, detail=result["message"])
-
-
-# --------------------------------------voice API--------------------------------------
-# GET : 사용자 음성 리스트 조회
-@app.get("/users/voices", response_model=UserVoiceListResponse)
+# ============== users 영역 (음성 업로드/조회/삭제 등) =============
+@users_router.get("/voices", response_model=UserVoiceListResponse)
 async def get_user_voice_list(username: str):
-    """사용자 음성 리스트 조회"""
     db = next(get_db())
     voice_service = get_voice_service(db)
-    
     result = voice_service.get_user_voice_list(username)
-    
-    return UserVoiceListResponse(
-        success=result["success"],
-        voices=result.get("voices", [])
+    return UserVoiceListResponse(success=result["success"], voices=result.get("voices", []))
+
+@users_router.get("/voices/{voice_id}", response_model=UserVoiceDetailResponse)
+async def get_user_voice_detail(voice_id: int, username: str):
+    db = next(get_db())
+    voice_service = get_voice_service(db)
+    result = voice_service.get_user_voice_detail(voice_id, username)
+    if not result.get("success"):
+        raise HTTPException(status_code=404, detail=result.get("error", "Not Found"))
+    return UserVoiceDetailResponse(
+        voice_id=voice_id,
+        title=result.get("title"),
+        top_emotion=result.get("top_emotion"),
+        created_at=result.get("created_at", ""),
+        voice_content=result.get("voice_content"),
     )
 
-
-# POST : 질문과 함께 음성 업로드
-@app.post("/users/voices", response_model=VoiceQuestionUploadResponse)
-async def upload_voice_with_question(
-    file: UploadFile = File(...),
-    username: str = Form(...),
-    question_id: int = Form(...)
-):
-    """질문과 함께 음성 파일 업로드 (S3 + DB 저장 + STT + voice_question 매핑)"""
+@users_router.delete("/voices/{voice_id}")
+async def delete_user_voice(voice_id: int, username: str):
     db = next(get_db())
     voice_service = get_voice_service(db)
-    
+    result = voice_service.delete_user_voice(voice_id, username)
+    if result.get("success"):
+        return {"success": True}
+    raise HTTPException(status_code=400, detail=result.get("message", "Delete failed"))
+
+@users_router.post("/voices", response_model=VoiceQuestionUploadResponse)
+async def upload_voice_with_question(
+    file: UploadFile = File(...),
+    question_id: int = Form(...),
+    username: str = None,
+):
+    db = next(get_db())
+    voice_service = get_voice_service(db)
+    if not username:
+        raise HTTPException(status_code=400, detail="username is required as query parameter")
     result = await voice_service.upload_voice_with_question(file, username, question_id)
-    
     if result["success"]:
         return VoiceQuestionUploadResponse(
             success=True,
@@ -225,180 +187,83 @@ async def upload_voice_with_question(
     else:
         raise HTTPException(status_code=400, detail=result["message"])
 
+# 모든 질문 목록 반환
+@questions_router.get("")
+async def get_questions():
+    db = next(get_db())
+    questions = db.query(Question).all()
+    results = [
+        {"question_id": q.question_id, "question_category": q.question_category, "content": q.content}
+        for q in questions
+    ]
+    return {"success": True, "questions": results}
 
-# POST : upload voice with STT
-@app.post("/voices/upload")
-async def upload_voice(
-    file: UploadFile = File(...),
-    folder: Optional[str] = Form(default=None),
-    language_code: str = Form(default="ko-KR")
+# 질문 랜덤 반환
+@questions_router.get("/random")
+async def get_random_question():
+    db = next(get_db())
+    question_count = db.query(Question).count()
+    if question_count == 0:
+        return {"success": False, "question": None}
+    import random
+    offset = random.randint(0, question_count - 1)
+    q = db.query(Question).offset(offset).first()
+    if q:
+        result = {"question_id": q.question_id, "question_category": q.question_category, "content": q.content}
+        return {"success": True, "question": result}
+    return {"success": False, "question": None}
+
+# ============== care 영역 (보호자전용) =============
+@care_router.get("/users/voices", response_model=CareUserVoiceListResponse)
+async def get_care_user_voice_list(care_username: str, skip: int = 0, limit: int = 20):
+    db = next(get_db())
+    voice_service = get_voice_service(db)
+    result = voice_service.get_care_voice_list(care_username, skip=skip, limit=limit)
+    return CareUserVoiceListResponse(success=result["success"], voices=result.get("voices", []))
+
+@care_router.get("/users/voices/analyzing/frequency")
+async def get_emotion_monthly_frequency(
+    care_username: str, month: str
 ):
-    """음성 파일을 업로드하고 STT를 수행합니다."""
-    bucket = os.getenv("S3_BUCKET_NAME")
-    if not bucket:
-        raise HTTPException(status_code=500, detail="S3_BUCKET_NAME not configured")
+    """
+    보호자 페이지: 연결된 유저의 한달간 감정 빈도수 집계 (CareService 내부 로직 사용)
+    """
+    db = next(get_db())
+    care_service = CareService(db)
+    return care_service.get_emotion_monthly_frequency(care_username, month)
 
-    # 파일 내용을 메모리에 읽기 (두 번 사용하기 위해)
-    file_content = await file.read()
-    
-    # S3 업로드
-    base_prefix = VOICE_BASE_PREFIX.rstrip("/")
-    effective_prefix = f"{base_prefix}/{folder or DEFAULT_UPLOAD_FOLDER}".rstrip("/")
-    key = f"{effective_prefix}/{file.filename}"
-    
-    from io import BytesIO
-    file_obj_for_s3 = BytesIO(file_content)
-    upload_fileobj(bucket=bucket, key=key, fileobj=file_obj_for_s3)
-
-    # STT 변환 - 파일 내용을 직접 사용
-    from io import BytesIO
-    temp_file_obj = BytesIO(file_content)
-    
-    # UploadFile과 유사한 객체 생성
-    class TempUploadFile:
-        def __init__(self, content, filename):
-            self.file = content
-            self.filename = filename
-            self.content_type = "audio/wav"
-    
-    temp_upload_file = TempUploadFile(temp_file_obj, file.filename)
-    stt_result = transcribe_voice(temp_upload_file, language_code)
-
-    # 파일 목록 조회
-    names = list_bucket_objects(bucket=bucket, prefix=effective_prefix)
-    
-    return {
-        "uploaded": key,
-        "files": names,
-        "transcription": stt_result
-    }
-
-
-# GET : query my voice histories
-@app.get("/voices")
-async def list_voices(skip: int = 0, limit: int = 50, folder: Optional[str] = None):
-    bucket = os.getenv("S3_BUCKET_NAME")
-    if not bucket:
-        raise HTTPException(status_code=500, detail="S3_BUCKET_NAME not configured")
-    base_prefix = VOICE_BASE_PREFIX.rstrip("/")
-    effective_prefix = f"{base_prefix}/{folder or DEFAULT_UPLOAD_FOLDER}".rstrip("/")
-
-    keys = list_bucket_objects(bucket=bucket, prefix=effective_prefix)
-    # 페이징 비슷하게 slice만 적용
-    sliced = keys[skip: skip + limit]
-    return {"items": sliced, "count": len(sliced), "next": skip + len(sliced)}
-
-
-# GET : query specific voice & show result
-@app.get("/voices/{voice_id}")
-async def get_voice(voice_id: str):
-    # 내부 로직은 생략, 더미 상세 반환
-    result = {
-        "voice_id": voice_id,
-        "filename": f"{voice_id}.wav",
-        "status": "processed",
-        "duration_sec": 12.34,
-        "analysis": {"pitch_mean": 220.5, "energy": 0.82}
-    }
-    return JSONResponse(content=result)
-
-
-# POST : analyze emotion from S3 file
-@app.post("/voices/{voice_key}/analyze-emotion")
-async def analyze_emotion_from_s3(voice_key: str):
-    """S3에 저장된 음성 파일의 감정을 분석합니다."""
-    bucket = os.getenv("S3_BUCKET_NAME")
-    if not bucket:
-        raise HTTPException(status_code=500, detail="S3_BUCKET_NAME not configured")
-    
-    try:
-        # S3에서 파일 다운로드
-        from .s3_service import get_s3_client
-        s3_client = get_s3_client()
-        
-        response = s3_client.get_object(Bucket=bucket, Key=voice_key)
-        file_content = response['Body'].read()
-        
-        # BytesIO로 파일 객체 생성
-        from io import BytesIO
-        file_obj = BytesIO(file_content)
-        
-        # 파일명 추출 (키에서 마지막 부분)
-        filename = voice_key.split('/')[-1]
-        
-        class FileWrapper:
-            def __init__(self, content, filename, content_type):
-                self.file = content
-                self.filename = filename
-                self.content_type = content_type
-        
-        emotion_file = FileWrapper(file_obj, filename, "audio/wav")
-        emotion_result = analyze_voice_emotion(emotion_file)
-        
-        return {
-            "voice_key": voice_key,
-            "emotion_analysis": emotion_result
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=404, detail=f"파일을 찾을 수 없거나 분석 중 오류 발생: {str(e)}")
-
-
-# POST : convert speech to text using Google STT
-@app.post("/voices/transcribe")
-async def transcribe_speech(
-    file: UploadFile = File(...),
-    language_code: str = "ko-KR"
+@care_router.get("/users/voices/analyzing/weekly")
+async def get_emotion_weekly_summary(
+    care_username: str,
+    month: str,
+    week: int
 ):
-    """음성 파일을 텍스트로 변환합니다."""
-    stt_result = transcribe_voice(file, language_code)
-    return stt_result
+    """보호자페이지 - 연결유저 월/주차별 요일 top 감정 통계"""
+    db = next(get_db())
+    care_service = CareService(db)
+    return care_service.get_emotion_weekly_summary(care_username, month, week)
 
-
-# POST : analyze text sentiment using Google NLP
-@app.post("/nlp/sentiment")
-async def analyze_sentiment(
-    text: str,
-    language_code: str = "ko"
-):
-    """텍스트의 감정을 분석합니다."""
+# ============== nlp 영역 (구글 NLP) =============
+@nlp_router.post("/sentiment")
+async def analyze_sentiment(text: str, language_code: str = "ko"):
     sentiment_result = analyze_text_sentiment(text, language_code)
     return sentiment_result
 
-
-# POST : extract entities from text using Google NLP
-@app.post("/nlp/entities")
-async def extract_entities(
-    text: str,
-    language_code: str = "ko"
-):
-    """텍스트에서 엔티티를 추출합니다."""
+@nlp_router.post("/entities")
+async def extract_entities(text: str, language_code: str = "ko"):
     entities_result = analyze_text_entities(text, language_code)
     return entities_result
 
-
-# POST : analyze text syntax using Google NLP
-@app.post("/nlp/syntax")
-async def analyze_syntax(
-    text: str,
-    language_code: str = "ko"
-):
-    """텍스트의 구문을 분석합니다."""
+@nlp_router.post("/syntax")
+async def analyze_syntax(text: str, language_code: str = "ko"):
     syntax_result = analyze_text_syntax(text, language_code)
     return syntax_result
 
-
-# POST : comprehensive text analysis using Google NLP
-@app.post("/nlp/analyze")
-async def analyze_text_comprehensive(
-    text: str,
-    language_code: str = "ko"
-):
-    """텍스트의 감정, 엔티티, 구문을 종합 분석합니다."""
+@nlp_router.post("/analyze")
+async def analyze_text_comprehensive(text: str, language_code: str = "ko"):
     sentiment_result = analyze_text_sentiment(text, language_code)
     entities_result = analyze_text_entities(text, language_code)
     syntax_result = analyze_text_syntax(text, language_code)
-    
     return {
         "text": text,
         "language_code": language_code,
@@ -406,3 +271,74 @@ async def analyze_text_comprehensive(
         "entity_analysis": entities_result,
         "syntax_analysis": syntax_result
     }
+
+# ============== test 영역 =============
+@test_router.post("/voice/analyze", response_model=VoiceAnalyzePreviewResponse)
+async def test_emotion_analyze(file: UploadFile = File(...)):
+    try:
+        data = await file.read()
+        from io import BytesIO
+        class FileWrapper:
+            def __init__(self, content, filename):
+                self.file = content
+                self.filename = filename
+                self.content_type = "audio/m4a" if filename.lower().endswith(".m4a") else "audio/wav"
+        wrapped = FileWrapper(BytesIO(data), file.filename)
+        result = analyze_voice_emotion(wrapped)
+        probs = result.get("emotion_scores") or {}
+        def to_bps(x):
+            try:
+                return max(0, min(10000, int(round(float(x) * 10000))))
+            except Exception:
+                return 0
+        happy = to_bps(probs.get("happy", 0))
+        sad = to_bps(probs.get("sad", 0))
+        neutral = to_bps(probs.get("neutral", 0))
+        angry = to_bps(probs.get("angry", 0))
+        fear = to_bps(probs.get("fear", 0))
+        surprise = to_bps(probs.get("surprise", 0))
+        total = happy + sad + neutral + angry + fear + surprise
+        if total == 0:
+            neutral = 10000
+            happy = sad = angry = fear = surprise = 0
+        else:
+            scale = 10000 / float(total)
+            vals = {
+                "happy": int(round(happy * scale)),
+                "sad": int(round(sad * scale)),
+                "neutral": int(round(neutral * scale)),
+                "angry": int(round(angry * scale)),
+                "fear": int(round(fear * scale)),
+                "surprise": int(round(surprise * scale)),
+            }
+            diff = 10000 - sum(vals.values())
+            if diff != 0:
+                k = max(vals, key=lambda k: vals[k])
+                vals[k] = max(0, min(10000, vals[k] + diff))
+            happy, sad, neutral, angry, fear, surprise = (
+                vals["happy"], vals["sad"], vals["neutral"], vals["angry"], vals["fear"], vals["surprise"]
+            )
+        top_emotion = result.get("top_emotion") or result.get("label") or result.get("emotion")
+        top_conf_bps = to_bps(result.get("top_confidence") or result.get("confidence", 0))
+        return VoiceAnalyzePreviewResponse(
+            voice_id=None,
+            happy_bps=happy,
+            sad_bps=sad,
+            neutral_bps=neutral,
+            angry_bps=angry,
+            fear_bps=fear,
+            surprise_bps=surprise,
+            top_emotion=top_emotion,
+            top_confidence_bps=top_conf_bps,
+            model_version=result.get("model_version")
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"emotion analyze failed: {str(e)}")
+
+# ---------------- router 등록 ----------------
+app.include_router(users_router)
+app.include_router(care_router)
+app.include_router(admin_router)
+app.include_router(nlp_router)
+app.include_router(test_router)
+app.include_router(questions_router)

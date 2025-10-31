@@ -7,6 +7,7 @@ import asyncio
 from .s3_service import upload_fileobj
 from .stt_service import transcribe_voice
 from .nlp_service import analyze_text_sentiment
+from .emotion_service import analyze_voice_emotion
 from .constants import VOICE_BASE_PREFIX, DEFAULT_UPLOAD_FOLDER
 from .db_service import get_db_service
 from .auth_service import get_auth_service
@@ -77,8 +78,9 @@ class VoiceService:
                 sample_rate=16000  # 기본값
             )
             
-            # 5. STT → NLP 순차 처리 (백그라운드 비동기)
+            # 5. 비동기 후처리 (STT→NLP, 음성 감정 분석)
             asyncio.create_task(self._process_stt_and_nlp_background(file_content, file.filename, voice.voice_id))
+            asyncio.create_task(self._process_audio_emotion_background(file_content, file.filename, voice.voice_id))
             
             return {
                 "success": True,
@@ -140,6 +142,88 @@ class VoiceService:
             
         except Exception as e:
             print(f"STT → NLP 처리 중 오류 발생: {e}")
+
+    async def _process_audio_emotion_background(self, file_content: bytes, filename: str, voice_id: int):
+        """음성 파일 자체의 감정 분석을 백그라운드에서 수행하여 voice_analyze 저장"""
+        try:
+            file_obj = BytesIO(file_content)
+
+            class TempUploadFile:
+                def __init__(self, content, filename):
+                    self.file = content
+                    self.filename = filename
+                    self.content_type = "audio/m4a" if filename.endswith('.m4a') else "audio/wav"
+
+            emotion_file = TempUploadFile(file_obj, filename)
+            result = analyze_voice_emotion(emotion_file)
+
+            def to_bps(v: float) -> int:
+                try:
+                    return max(0, min(10000, int(round(float(v) * 10000))))
+                except Exception:
+                    return 0
+
+            probs = result.get("emotion_scores", {})
+            happy = to_bps(probs.get("happy", probs.get("happiness", 0)))
+            sad = to_bps(probs.get("sad", probs.get("sadness", 0)))
+            neutral = to_bps(probs.get("neutral", 0))
+            angry = to_bps(probs.get("angry", probs.get("anger", 0)))
+            fear = to_bps(probs.get("fear", probs.get("fearful", 0)))
+            surprise = to_bps(probs.get("surprise", probs.get("surprised", 0)))
+
+            # 모델 응답 키 보정: emotion_service는 기본적으로 "emotion"을 반환
+            top_emotion = result.get("top_emotion") or result.get("label") or result.get("emotion")
+            top_conf = result.get("top_confidence") or result.get("confidence", 0)
+            top_conf_bps = to_bps(top_conf)
+            model_version = result.get("model_version")
+
+            total_raw = happy + sad + neutral + angry + fear + surprise
+            print(f"[voice_analyze] ROUND 이전: happy={happy}, sad={sad}, neutral={neutral}, angry={angry}, fear={fear}, surprise={surprise} → 합계={total_raw}")
+            if total_raw == 0:
+                # 모델이 확률을 반환하지 못한 경우: 중립 100%
+                print(f"[voice_analyze] 확률 없음: 모두 0 → neutral=10000")
+                happy, sad, neutral, angry, fear, surprise = 0, 0, 10000, 0, 0, 0
+            else:
+                # 비율 보정(라운딩 후 합 10000로 맞춤)
+                scale = 10000 / float(total_raw)
+                before_vals = {
+                    "happy": happy, "sad": sad, "neutral": neutral, 
+                    "angry": angry, "fear": fear, "surprise": surprise,
+                }
+                vals = {
+                    "happy": int(round(happy * scale)),
+                    "sad": int(round(sad * scale)),
+                    "neutral": int(round(neutral * scale)),
+                    "angry": int(round(angry * scale)),
+                    "fear": int(round(fear * scale)),
+                    "surprise": int(round(surprise * scale)),
+                }
+                print(f"[voice_analyze] ROUND: raw={before_vals} scale={scale:.5f} → after={vals}")
+                diff = 10000 - sum(vals.values())
+                if diff != 0:
+                    # 가장 큰 항목에 차이를 보정(음수/양수 모두 처리)
+                    key_max = max(vals, key=lambda k: vals[k])
+                    print(f"[voice_analyze] DIFF 보정: {diff} → max_emotion={key_max} ({vals[key_max]}) before")
+                    vals[key_max] = max(0, min(10000, vals[key_max] + diff))
+                    print(f"[voice_analyze] DIFF 보정: {diff} → max_emotion={key_max} after={vals[key_max]}")
+                happy, sad, neutral, angry, fear, surprise = (
+                    vals["happy"], vals["sad"], vals["neutral"], vals["angry"], vals["fear"], vals["surprise"]
+                )
+
+            self.db_service.create_voice_analyze(
+                voice_id=voice_id,
+                happy_bps=happy,
+                sad_bps=sad,
+                neutral_bps=neutral,
+                angry_bps=angry,
+                fear_bps=fear,
+                surprise_bps=surprise,
+                top_emotion=top_emotion,
+                top_confidence_bps=top_conf_bps,
+                model_version=model_version,
+            )
+        except Exception as e:
+            print(f"Audio emotion background error: {e}")
     
     def get_user_voice_list(self, username: str) -> Dict[str, Any]:
         """
@@ -185,6 +269,7 @@ class VoiceService:
                     content = voice.voice_content.content
                 
                 voice_list.append({
+                    "voice_id": voice.voice_id,
                     "created_at": created_at,
                     "emotion": emotion,
                     "question_title": question_title,
@@ -201,6 +286,68 @@ class VoiceService:
                 "success": False,
                 "voices": []
             }
+
+    def get_care_voice_list(self, care_username: str, skip: int = 0, limit: int = 20) -> Dict[str, Any]:
+        """보호자 페이지: 연결된 사용자의 분석 완료 음성 목록 조회(페이징)"""
+        try:
+            voices = self.db_service.get_care_voices(care_username, skip=skip, limit=limit)
+            items = []
+            for v in voices:
+                created_at = v.created_at.isoformat() if v.created_at else ""
+                emotion = v.voice_analyze.top_emotion if v.voice_analyze else None
+                items.append({
+                    "voice_id": v.voice_id,
+                    "created_at": created_at,
+                    "emotion": emotion,
+                })
+            return {"success": True, "voices": items}
+        except Exception:
+            return {"success": False, "voices": []}
+
+    def get_user_voice_detail(self, voice_id: int, username: str) -> Dict[str, Any]:
+        """voice_id와 username으로 상세 정보 조회"""
+        try:
+            voice = self.db_service.get_voice_detail_for_username(voice_id, username)
+            if not voice:
+                return {"success": False, "error": "Voice not found or not owned by user"}
+
+            title = None
+            if voice.questions:
+                title = voice.questions[0].content
+
+            top_emotion = None
+            if voice.voice_analyze:
+                top_emotion = voice.voice_analyze.top_emotion
+
+            created_at = voice.created_at.isoformat() if voice.created_at else ""
+
+            voice_content = None
+            if voice.voice_content:
+                voice_content = voice.voice_content.content
+
+            return {
+                "success": True,
+                "title": title,
+                "top_emotion": top_emotion,
+                "created_at": created_at,
+                "voice_content": voice_content,
+            }
+        except Exception:
+            return {"success": False, "error": "Failed to fetch voice detail"}
+
+    def delete_user_voice(self, voice_id: int, username: str) -> Dict[str, Any]:
+        """사용자 소유 검증 후 음성 및 연관 데이터 삭제"""
+        try:
+            voice = self.db_service.get_voice_owned_by_username(voice_id, username)
+            if not voice:
+                return {"success": False, "message": "Voice not found or not owned by user"}
+
+            ok = self.db_service.delete_voice_with_relations(voice_id)
+            if not ok:
+                return {"success": False, "message": "Delete failed"}
+            return {"success": True, "message": "Deleted"}
+        except Exception as e:
+            return {"success": False, "message": f"Delete error: {str(e)}"}
     
     async def upload_voice_with_question(self, file: UploadFile, username: str, question_id: int) -> Dict[str, Any]:
         """
@@ -266,8 +413,9 @@ class VoiceService:
                 sample_rate=16000
             )
             
-            # 6. STT + NLP 순차 처리 (백그라운드 비동기)
+            # 6. 비동기 후처리 (STT→NLP, 음성 감정 분석)
             asyncio.create_task(self._process_stt_and_nlp_background(file_content, file.filename, voice.voice_id))
+            asyncio.create_task(self._process_audio_emotion_background(file_content, file.filename, voice.voice_id))
             
             # 7. Voice-Question 매핑 저장
             self.db_service.link_voice_question(voice.voice_id, question_id)
