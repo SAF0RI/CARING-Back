@@ -275,11 +275,7 @@ async def get_care_voice_composite(voice_id: int, care_username: str):
 
     return {
         "voice_id": voice_id,
-        "valence_x1000": row.valence_x1000,
-        "arousal_x1000": row.arousal_x1000,
-        "intensity_x1000": row.intensity_x1000,
-        "alpha_bps": row.alpha_bps or 0,
-        "beta_bps": row.beta_bps or 0,
+
         # *_bps fields are hidden per design
         "happy_pct": pct(row.happy_bps),
         "sad_pct": pct(row.sad_bps),
@@ -288,7 +284,6 @@ async def get_care_voice_composite(voice_id: int, care_username: str):
         "fear_pct": pct(row.fear_bps),
         "surprise_pct": pct(row.surprise_bps),
         "top_emotion": row.top_emotion,
-        "top_emotion_confidence_bps": row.top_emotion_confidence_bps or 0,
         "top_emotion_confidence_pct": pct(row.top_emotion_confidence_bps or 0),
     }
 

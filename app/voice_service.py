@@ -11,6 +11,7 @@ from .emotion_service import analyze_voice_emotion
 from .constants import VOICE_BASE_PREFIX, DEFAULT_UPLOAD_FOLDER
 from .db_service import get_db_service
 from .auth_service import get_auth_service
+from .repositories.job_repo import ensure_job_row, mark_text_done, mark_audio_done, try_aggregate
 
 
 class VoiceService:
@@ -77,6 +78,8 @@ class VoiceService:
                 user_id=user.user_id,
                 sample_rate=16000  # 기본값
             )
+            # ensure job row
+            ensure_job_row(self.db, voice.voice_id)
             
             # 5. 비동기 후처리 (STT→NLP, 음성 감정 분석)
             asyncio.create_task(self._process_stt_and_nlp_background(file_content, file.filename, voice.voice_id))
@@ -137,6 +140,9 @@ class VoiceService:
                 provider="google",
                 confidence_bps=int(confidence * 10000)
             )
+            # mark text done and try aggregate
+            mark_text_done(self.db, voice_id)
+            try_aggregate(self.db, voice_id)
             
             print(f"STT → NLP 처리 완료: voice_id={voice_id}")
             
@@ -244,6 +250,9 @@ class VoiceService:
                 top_confidence_bps=top_conf_bps,
                 model_version=model_version,
             )
+            # mark audio done and try aggregate
+            mark_audio_done(self.db, voice_id)
+            try_aggregate(self.db, voice_id)
             print(f"[voice_analyze] saved voice_id={voice_id} top={top_emotion} conf_bps={top_conf_bps}", flush=True)
         except Exception as e:
             print(f"Audio emotion background error: {e}", flush=True)
@@ -435,6 +444,8 @@ class VoiceService:
                 user_id=user.user_id,
                 sample_rate=16000
             )
+            # ensure job row
+            ensure_job_row(self.db, voice.voice_id)
             
             # 6. 비동기 후처리 (STT→NLP, 음성 감정 분석)
             asyncio.create_task(self._process_stt_and_nlp_background(file_content, file.filename, voice.voice_id))

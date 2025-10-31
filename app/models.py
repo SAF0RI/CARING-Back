@@ -48,6 +48,7 @@ class Voice(Base):
     voice_analyze = relationship("VoiceAnalyze", back_populates="voice", uselist=False, cascade="all, delete-orphan")
     questions = relationship("Question", secondary="voice_question", back_populates="voices")
     voice_composite = relationship("VoiceComposite", back_populates="voice", uselist=False, cascade="all, delete-orphan")
+    voice_job_process = relationship("VoiceJobProcess", back_populates="voice", uselist=False, cascade="all, delete-orphan")
     
     # 인덱스
     __table_args__ = (
@@ -177,3 +178,17 @@ class VoiceComposite(Base):
     __table_args__ = (
         UniqueConstraint('voice_id', name='uq_vc_voice2'),
     )
+
+
+class VoiceJobProcess(Base):
+    """비동기 작업 상태 및 집계 락 관리"""
+    __tablename__ = "voice_job_process"
+
+    voice_id = Column(BigInteger, ForeignKey("voice.voice_id", ondelete="CASCADE"), primary_key=True)
+    text_done = Column(SmallInteger, nullable=False, default=0)
+    audio_done = Column(SmallInteger, nullable=False, default=0)
+    locked = Column(SmallInteger, nullable=False, default=0)
+    updated_at = Column(DateTime, nullable=False, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+
+    # 관계
+    voice = relationship("Voice", back_populates="voice_job_process", uselist=False)
