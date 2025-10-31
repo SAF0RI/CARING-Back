@@ -205,6 +205,26 @@ async def get_s3_object_urls(expires_in: int = 3600):
     urls = list_bucket_objects_with_urls(bucket=bucket, prefix=prefix_env, expires_in=expires_in)
     return {"success": True, "prefix": prefix_env, "urls": urls}
 
+@users_router.get("/voices/analyzing/frequency")
+async def get_user_emotion_frequency(username: str, month: str):
+    """사용자 본인의 한달간 감정 빈도수 집계"""
+    db = next(get_db())
+    voice_service = get_voice_service(db)
+    result = voice_service.get_user_emotion_monthly_frequency(username, month)
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("message", "조회 실패"))
+    return result
+
+@users_router.get("/voices/analyzing/weekly")
+async def get_user_emotion_weekly(username: str, month: str, week: int):
+    """사용자 본인의 월/주차별 요일별 top 감정 요약"""
+    db = next(get_db())
+    voice_service = get_voice_service(db)
+    result = voice_service.get_user_emotion_weekly_summary(username, month, week)
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("message", "조회 실패"))
+    return result
+
 # 모든 질문 목록 반환
 @questions_router.get("")
 async def get_questions():

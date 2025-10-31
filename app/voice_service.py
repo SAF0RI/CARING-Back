@@ -16,6 +16,11 @@ from .constants import VOICE_BASE_PREFIX, DEFAULT_UPLOAD_FOLDER
 from .db_service import get_db_service
 from .auth_service import get_auth_service
 from .repositories.job_repo import ensure_job_row, mark_text_done, mark_audio_done, try_aggregate
+from sqlalchemy import func, extract
+from .models import VoiceAnalyze, Voice
+from datetime import datetime
+from calendar import monthrange
+from collections import Counter, defaultdict
 
 
 class VoiceService:
@@ -529,6 +534,78 @@ class VoiceService:
                 "success": False,
                 "message": f"업로드 실패: {str(e)}"
             }
+
+    def get_user_emotion_monthly_frequency(self, username: str, month: str) -> Dict[str, Any]:
+        """사용자 본인의 한달간 감정 빈도수 집계"""
+        try:
+            user = self.auth_service.get_user_by_username(username)
+            if not user:
+                return {"success": False, "frequency": {}, "message": "User not found"}
+            try:
+                y, m = map(int, month.split("-"))
+            except Exception:
+                return {"success": False, "frequency": {}, "message": "month format YYYY-MM required"}
+            results = (
+                self.db.query(VoiceAnalyze.top_emotion, func.count())
+                .join(Voice, Voice.voice_id == VoiceAnalyze.voice_id)
+                .filter(
+                    Voice.user_id == user.user_id,
+                    extract('year', Voice.created_at) == y,
+                    extract('month', Voice.created_at) == m
+                )
+                .group_by(VoiceAnalyze.top_emotion)
+                .all()
+            )
+            freq = {str(emotion): count for emotion, count in results if emotion}
+            return {"success": True, "frequency": freq}
+        except Exception as e:
+            return {"success": False, "frequency": {}, "message": f"error: {str(e)}"}
+
+    def get_user_emotion_weekly_summary(self, username: str, month: str, week: int) -> Dict[str, Any]:
+        """사용자 본인의 월/주차별 요일별 top 감정 요약"""
+        try:
+            user = self.auth_service.get_user_by_username(username)
+            if not user:
+                return {"success": False, "weekly": [], "message": "User not found"}
+            try:
+                y, m = map(int, month.split("-"))
+            except Exception:
+                return {"success": False, "weekly": [], "message": "month format YYYY-MM required"}
+            start_day = (week-1)*7+1
+            end_day = min(week*7, monthrange(y, m)[1])
+            start_date = datetime(y, m, start_day)
+            end_date = datetime(y, m, end_day, 23, 59, 59)
+            q = (
+                self.db.query(Voice, VoiceAnalyze)
+                .join(VoiceAnalyze, Voice.voice_id == VoiceAnalyze.voice_id)
+                .filter(
+                    Voice.user_id == user.user_id,
+                    Voice.created_at >= start_date,
+                    Voice.created_at <= end_date,
+                ).order_by(Voice.created_at.asc())
+            )
+            days = defaultdict(list)
+            day_first = {}
+            for v, va in q:
+                d = v.created_at.date()
+                em = va.top_emotion
+                days[d].append(em)
+                if d not in day_first:
+                    day_first[d] = em
+            result = []
+            for d in sorted(days.keys()):
+                cnt = Counter(days[d])
+                top, val = cnt.most_common(1)[0]
+                top_emotions = [e for e, c in cnt.items() if c == val]
+                selected = day_first[d] if len(top_emotions) > 1 and day_first[d] in top_emotions else top
+                result.append({
+                    "date": d.isoformat(),
+                    "weekday": d.strftime("%a"),
+                    "top_emotion": selected
+                })
+            return {"success": True, "weekly": result}
+        except Exception as e:
+            return {"success": False, "weekly": [], "message": f"error: {str(e)}"}
 
 
 def get_voice_service(db: Session) -> VoiceService:
