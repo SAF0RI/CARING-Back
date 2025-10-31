@@ -57,6 +57,7 @@ class EmotionAnalyzer:
             with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp_file:
                 content = audio_file.file.read()
                 tmp_file.write(content)
+                audio_file.file.seek(0)
                 tmp_file_path = tmp_file.name
             
             # 오디오 로드 (16kHz, 견고한 로더)
