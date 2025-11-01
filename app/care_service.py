@@ -20,7 +20,7 @@ class CareService:
             care = self.auth_service.get_user_by_username(care_username)
             if not care or care.role != 'CARE' or not care.connecting_user_code:
                 return {"success": False, "frequency": {}, "message": "Care user not found or no connection."}
-            user = self.db.query(User).filter(User.user_code == care.connecting_user_code).first()
+            user = self.db.query(User).filter(User.username == care.connecting_user_code).first()
             if not user:
                 return {"success": False, "frequency": {}, "message": "Connected user not found."}
             try:
@@ -55,7 +55,7 @@ class CareService:
             care = self.auth_service.get_user_by_username(care_username)
             if not care or care.role != 'CARE' or not care.connecting_user_code:
                 return {"success": False, "weekly": [], "message": "Care user not found or no connection."}
-            user = self.db.query(User).filter(User.user_code == care.connecting_user_code).first()
+            user = self.db.query(User).filter(User.username == care.connecting_user_code).first()
             if not user:
                 return {"success": False, "weekly": [], "message": "Connected user not found."}
             try:

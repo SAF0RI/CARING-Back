@@ -96,8 +96,8 @@ class DatabaseService:
         care = self.get_user_by_username(care_username)
         if not care or not care.connecting_user_code:
             return []
-        # 2) 연결된 사용자 조회
-        linked_user = self.get_user_by_user_code(care.connecting_user_code)
+        # 2) 연결된 사용자 조회 (username으로 조회)
+        linked_user = self.get_user_by_username(care.connecting_user_code)
         if not linked_user:
             return []
         # 3) 연결 사용자 음성 중 분석 완료만(join) 페이징

@@ -189,22 +189,6 @@ async def upload_voice_with_question(
     else:
         raise HTTPException(status_code=400, detail=result["message"])
 
-@users_router.get("/voices/s3-urls")
-async def get_s3_object_urls(expires_in: int = 3600):
-    """env(S3_LIST_PREFIX)에서 prefix를 읽어 presigned URL 목록 반환
-    fallback: VOICE_BASE_PREFIX/DEFAULT_UPLOAD_FOLDER
-    """
-    bucket = os.getenv("S3_BUCKET_NAME")
-    print(f"[S3] bucket={bucket}")
-    if not bucket:
-        raise HTTPException(status_code=500, detail="S3_BUCKET_NAME not configured")
-    prefix_env = os.getenv("S3_LIST_PREFIX")
-    if not prefix_env:
-        base_prefix = VOICE_BASE_PREFIX.rstrip("/")
-        prefix_env = f"{base_prefix}/{DEFAULT_UPLOAD_FOLDER}".rstrip("/")
-    urls = list_bucket_objects_with_urls(bucket=bucket, prefix=prefix_env, expires_in=expires_in)
-    return {"success": True, "prefix": prefix_env, "urls": urls}
-
 @users_router.get("/voices/analyzing/frequency")
 async def get_user_emotion_frequency(username: str, month: str):
     """사용자 본인의 한달간 감정 빈도수 집계"""
@@ -293,7 +277,7 @@ async def get_care_voice_composite(voice_id: int, care_username: str):
     care_user = auth_service.get_user_by_username(care_username)
     if not care_user or care_user.role != 'CARE' or not care_user.connecting_user_code:
         raise HTTPException(status_code=400, detail="invalid care user or not connected")
-    connected_user = auth_service.get_user_by_code(care_user.connecting_user_code)
+    connected_user = auth_service.get_user_by_username(care_user.connecting_user_code)
     if not connected_user:
         raise HTTPException(status_code=400, detail="connected user not found")
 

@@ -42,7 +42,7 @@ class AuthService:
             username: 아이디
             password: 비밀번호
             role: 역할 (USER 또는 CARE)
-            connecting_user_code: CARE 역할일 때 연결할 사용자 코드
+            connecting_user_code: CARE 역할일 때 연결할 사용자 username
             
         Returns:
             dict: 회원가입 결과
@@ -67,9 +67,9 @@ class AuthService:
                         "error": "connecting_user_code is required for CARE role"
                     }
                 
-                # 연결할 사용자가 존재하는지 확인
+                # 연결할 사용자가 존재하는지 확인 (username으로 조회)
                 connecting_user = self.db.query(User).filter(
-                    User.user_code == connecting_user_code
+                    User.username == connecting_user_code
                 ).first()
                 
                 if not connecting_user:
