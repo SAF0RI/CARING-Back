@@ -286,13 +286,18 @@ class DatabaseService:
         )
 
     def delete_voice_with_relations(self, voice_id: int) -> bool:
-        """연관 데이터(voice_question, voice_content, voice_analyze) 삭제 후 voice 삭제"""
+        """연관 데이터(voice_question, voice_content, voice_analyze, voice_composite, voice_job_process) 삭제 후 voice 삭제"""
+        from .models import VoiceComposite, VoiceJobProcess
         # voice_question
         self.db.query(VoiceQuestion).filter(VoiceQuestion.voice_id == voice_id).delete(synchronize_session=False)
         # voice_content
         self.db.query(VoiceContent).filter(VoiceContent.voice_id == voice_id).delete(synchronize_session=False)
         # voice_analyze
         self.db.query(VoiceAnalyze).filter(VoiceAnalyze.voice_id == voice_id).delete(synchronize_session=False)
+        # voice_composite
+        self.db.query(VoiceComposite).filter(VoiceComposite.voice_id == voice_id).delete(synchronize_session=False)
+        # voice_job_process
+        self.db.query(VoiceJobProcess).filter(VoiceJobProcess.voice_id == voice_id).delete(synchronize_session=False)
         # voice
         deleted = self.db.query(Voice).filter(Voice.voice_id == voice_id).delete(synchronize_session=False)
         self.db.commit()
