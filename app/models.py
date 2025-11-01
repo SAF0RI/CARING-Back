@@ -47,6 +47,8 @@ class Voice(Base):
     voice_content = relationship("VoiceContent", back_populates="voice", uselist=False, cascade="all, delete-orphan")
     voice_analyze = relationship("VoiceAnalyze", back_populates="voice", uselist=False, cascade="all, delete-orphan")
     questions = relationship("Question", secondary="voice_question", back_populates="voices")
+    voice_composite = relationship("VoiceComposite", back_populates="voice", uselist=False, cascade="all, delete-orphan")
+    voice_job_process = relationship("VoiceJobProcess", back_populates="voice", uselist=False, cascade="all, delete-orphan")
     
     # 인덱스
     __table_args__ = (
@@ -138,4 +140,80 @@ class VoiceQuestion(Base):
     # 제약 조건
     __table_args__ = (
         UniqueConstraint('voice_id', 'question_id', name='uq_voice_question'),
+    )
+
+
+class VoiceComposite(Base):
+    """오디오/텍스트 융합 결과 저장 테이블"""
+    __tablename__ = "voice_composite"
+
+    voice_composite_id = Column(BigInteger, primary_key=True, autoincrement=True)
+    voice_id = Column(BigInteger, ForeignKey("voice.voice_id", ondelete="CASCADE"), nullable=False)
+
+    text_score_bps = Column(SmallInteger, nullable=True)
+    text_magnitude_x1000 = Column(Integer, nullable=True)
+
+    alpha_bps = Column(SmallInteger, nullable=True)
+    beta_bps = Column(SmallInteger, nullable=True)
+
+    valence_x1000 = Column(Integer, nullable=False)
+    arousal_x1000 = Column(Integer, nullable=False)
+    intensity_x1000 = Column(Integer, nullable=False)
+
+    happy_bps = Column(SmallInteger, nullable=False)
+    sad_bps = Column(SmallInteger, nullable=False)
+    neutral_bps = Column(SmallInteger, nullable=False)
+    angry_bps = Column(SmallInteger, nullable=False)
+    fear_bps = Column(SmallInteger, nullable=False)
+    surprise_bps = Column(SmallInteger, nullable=False)
+
+    top_emotion = Column(String(16), nullable=True)
+    top_emotion_confidence_bps = Column(SmallInteger, nullable=True)
+
+    created_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
+
+    # 관계
+    voice = relationship("Voice", back_populates="voice_composite", uselist=False)
+
+    __table_args__ = (
+        UniqueConstraint('voice_id', name='uq_vc_voice2'),
+    )
+
+
+class VoiceJobProcess(Base):
+    """비동기 작업 상태 및 집계 락 관리"""
+    __tablename__ = "voice_job_process"
+
+    voice_id = Column(BigInteger, ForeignKey("voice.voice_id", ondelete="CASCADE"), primary_key=True)
+    text_done = Column(SmallInteger, nullable=False, default=0)
+    audio_done = Column(SmallInteger, nullable=False, default=0)
+    locked = Column(SmallInteger, nullable=False, default=0)
+    updated_at = Column(DateTime, nullable=False, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+
+    # 관계
+    voice = relationship("Voice", back_populates="voice_job_process", uselist=False)
+
+
+class FcmToken(Base):
+    """FCM 토큰 관리 테이블"""
+    __tablename__ = "fcm_token"
+    
+    token_id = Column(BigInteger, primary_key=True, autoincrement=True)
+    user_id = Column(BigInteger, ForeignKey("user.user_id", ondelete="CASCADE"), nullable=False)
+    fcm_token = Column(String(255), nullable=False)  # FCM 토큰
+    device_id = Column(String(255), nullable=True)  # 기기 식별자
+    platform = Column(String(20), nullable=True)  # 'ios', 'android', 'web'
+    is_active = Column(SmallInteger, nullable=False, default=1)  # 1=활성, 0=비활성
+    created_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
+    updated_at = Column(DateTime, nullable=False, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+    
+    # 관계
+    user = relationship("User", backref="fcm_tokens")
+    
+    # 인덱스 및 제약 조건
+    __table_args__ = (
+        UniqueConstraint('user_id', 'device_id', name='uq_fcm_user_device'),
+        Index('idx_fcm_token', 'fcm_token'),
+        Index('idx_user_active', 'user_id', 'is_active'),
+        Index('idx_device_token', 'device_id', 'fcm_token'),
     )

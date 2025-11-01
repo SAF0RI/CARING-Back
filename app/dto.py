@@ -10,7 +10,7 @@ class SignupRequest(BaseModel):
     username: str
     password: str
     role: str  # USER or CARE
-    connecting_user_code: Optional[str] = None  # CARE 역할일 때 연결할 사용자 코드
+    connecting_user_code: Optional[str] = None  # CARE 역할일 때 연결할 사용자 username
 
 
 class SignupResponse(BaseModel):
@@ -32,6 +32,42 @@ class SigninResponse(BaseModel):
     username: str
     name: str
     role: str
+
+
+# 내정보 조회 관련 DTO
+class UserInfoResponse(BaseModel):
+    """일반 유저 내정보 조회 응답"""
+    name: str
+    username: str
+    connected_care_name: Optional[str] = None  # 연결된 보호자 이름 (없으면 null)
+
+
+class CareInfoResponse(BaseModel):
+    """보호자 내정보 조회 응답"""
+    name: str
+    username: str
+    connected_user_name: Optional[str] = None  # 연결된 피보호자 이름 (없으면 null)
+
+
+# FCM 관련 DTO
+class FcmTokenRegisterRequest(BaseModel):
+    """FCM 토큰 등록 요청"""
+    fcm_token: str
+    device_id: Optional[str] = None  # 기기 식별자
+    platform: Optional[str] = None  # 'ios', 'android', 'web'
+
+
+class FcmTokenRegisterResponse(BaseModel):
+    """FCM 토큰 등록 응답"""
+    message: str
+    token_id: int
+    is_active: bool
+
+
+class FcmTokenDeactivateResponse(BaseModel):
+    """FCM 토큰 비활성화 응답"""
+    message: str
+    deactivated_count: int
 
 
 # 음성 관련 DTO
@@ -68,6 +104,7 @@ class VoiceListItem(BaseModel):
     emotion: Optional[str] = None
     question_title: Optional[str] = None
     content: str
+    s3_url: Optional[str] = None
 
 
 class UserVoiceListResponse(BaseModel):
@@ -92,6 +129,7 @@ class UserVoiceDetailResponse(BaseModel):
     top_emotion: Optional[str] = None
     created_at: str
     voice_content: Optional[str] = None
+    s3_url: Optional[str] = None
 
 
 class VoiceAnalyzePreviewResponse(BaseModel):

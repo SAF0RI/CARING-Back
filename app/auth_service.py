@@ -42,7 +42,7 @@ class AuthService:
             username: 아이디
             password: 비밀번호
             role: 역할 (USER 또는 CARE)
-            connecting_user_code: CARE 역할일 때 연결할 사용자 코드
+            connecting_user_code: CARE 역할일 때 연결할 사용자 username
             
         Returns:
             dict: 회원가입 결과
@@ -67,9 +67,9 @@ class AuthService:
                         "error": "connecting_user_code is required for CARE role"
                     }
                 
-                # 연결할 사용자가 존재하는지 확인
+                # 연결할 사용자가 존재하는지 확인 (username으로 조회)
                 connecting_user = self.db.query(User).filter(
-                    User.user_code == connecting_user_code
+                    User.username == connecting_user_code
                 ).first()
                 
                 if not connecting_user:
@@ -201,6 +201,96 @@ class AuthService:
             return {
                 "success": False,
                 "error": f"Signin failed: {str(e)}"
+            }
+
+
+    def get_user_info(self, username: str) -> dict:
+        """
+        일반 유저 내정보 조회 (이름, username, 연결된 보호자 이름)
+        
+        Args:
+            username: 사용자 아이디
+            
+        Returns:
+            dict: 내정보 (name, username, connected_care_name)
+        """
+        try:
+            user = self.get_user_by_username(username)
+            if not user:
+                return {
+                    "success": False,
+                    "error": "User not found"
+                }
+            
+            if user.role != 'USER':
+                return {
+                    "success": False,
+                    "error": "This endpoint is for USER role only"
+                }
+            
+            # 연결된 보호자 찾기: connecting_user_code가 자기 username인 CARE 찾기
+            connected_care_name = None
+            care_user = self.db.query(User).filter(
+                User.role == 'CARE',
+                User.connecting_user_code == username
+            ).first()
+            
+            if care_user:
+                connected_care_name = care_user.name
+            
+            return {
+                "success": True,
+                "name": user.name,
+                "username": user.username,
+                "connected_care_name": connected_care_name
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Failed to get user info: {str(e)}"
+            }
+    
+    def get_care_info(self, username: str) -> dict:
+        """
+        보호자 내정보 조회 (이름, username, 연결된 피보호자 이름)
+        
+        Args:
+            username: 보호자 아이디
+            
+        Returns:
+            dict: 내정보 (name, username, connected_user_name)
+        """
+        try:
+            care = self.get_user_by_username(username)
+            if not care:
+                return {
+                    "success": False,
+                    "error": "Care user not found"
+                }
+            
+            if care.role != 'CARE':
+                return {
+                    "success": False,
+                    "error": "This endpoint is for CARE role only"
+                }
+            
+            # 연결된 피보호자 찾기: connecting_user_code는 피보호자의 username
+            connected_user_name = None
+            if care.connecting_user_code:
+                user = self.get_user_by_username(care.connecting_user_code)
+                if user:
+                    connected_user_name = user.name
+            
+            return {
+                "success": True,
+                "name": care.name,
+                "username": care.username,
+                "connected_user_name": connected_user_name
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Failed to get care info: {str(e)}"
             }
 
 
