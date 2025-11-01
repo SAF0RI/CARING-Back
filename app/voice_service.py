@@ -260,6 +260,16 @@ class VoiceService:
             except Exception:
                 pass
 
+            # 디버그 로그: 전체 결과 요약
+            try:
+                top_em = result.get('top_emotion') or result.get('emotion')
+                conf = result.get('confidence')
+                mv = result.get('model_version')
+                em_scores = result.get('emotion_scores') or {}
+                print(f"[emotion] result voice_id={voice_id} top={top_em} conf={conf} model={mv} scores={{{k: round(float(v),4) for k,v in em_scores.items()}}}", flush=True)
+            except Exception:
+                pass
+
             def to_bps(v: float) -> int:
                 try:
                     return max(0, min(10000, int(round(float(v) * 10000))))
@@ -343,6 +353,7 @@ class VoiceService:
             # mark audio done and try aggregate
             mark_audio_done(self.db, voice_id)
             try_aggregate(self.db, voice_id)
+
             print(f"[voice_analyze] saved voice_id={voice_id} top={top_emotion} conf_bps={top_conf_bps}", flush=True)
         except Exception as e:
             print(f"Audio emotion background error: {e}", flush=True)
