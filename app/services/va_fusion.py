@@ -1,5 +1,5 @@
 from math import exp, sqrt
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Optional
 
 # Emotion anchors for Valence (V) and Arousal (A)
 EMOTION_VA: Dict[str, Tuple[float, float]] = {
@@ -9,6 +9,15 @@ EMOTION_VA: Dict[str, Tuple[float, float]] = {
     "angry":    (-0.70, +0.80),
     "fear":     (-0.60, +0.70),
     "surprise": ( 0.00, +0.85),
+}
+
+# Intensity 판단 기준 (x1000 기준)
+INTENSITY_THRESHOLDS = {
+    "very_weak": 200,    # 0 ~ 200: 매우 약함 (거의 중립)
+    "weak": 500,         # 200 ~ 500: 약함
+    "moderate": 800,     # 500 ~ 800: 보통
+    "strong": 1100,      # 800 ~ 1100: 강함
+    "very_strong": 1414, # 1100 ~ 1414: 매우 강함 (최대값)
 }
 
 
@@ -110,6 +119,66 @@ def to_x1000(x: float) -> int:
         return 0
 
 
+def interpret_intensity(intensity_x1000: int) -> str:
+    """intensity_x1000 값을 감정 강도 레벨로 해석.
+    
+    Args:
+        intensity_x1000: intensity 값 (×1000 스케일)
+        
+    Returns:
+        "very_weak", "weak", "moderate", "strong", "very_strong" 중 하나
+    """
+    if intensity_x1000 <= INTENSITY_THRESHOLDS["very_weak"]:
+        return "very_weak"
+    elif intensity_x1000 <= INTENSITY_THRESHOLDS["weak"]:
+        return "weak"
+    elif intensity_x1000 <= INTENSITY_THRESHOLDS["moderate"]:
+        return "moderate"
+    elif intensity_x1000 <= INTENSITY_THRESHOLDS["strong"]:
+        return "strong"
+    else:
+        return "very_strong"
+
+
+def get_intensity_level_kr(intensity_x1000: int) -> str:
+    """intensity_x1000 값을 한국어 레벨로 반환.
+    
+    Returns:
+        "매우 약함", "약함", "보통", "강함", "매우 강함" 중 하나
+    """
+    level_map = {
+        "very_weak": "매우 약함",
+        "weak": "약함",
+        "moderate": "보통",
+        "strong": "강함",
+        "very_strong": "매우 강함",
+    }
+    level = interpret_intensity(intensity_x1000)
+    return level_map.get(level, "알 수 없음")
+
+
+def apply_zero_prob_mask(
+    sims: Dict[str, float],
+    audio_probs: Dict[str, float],
+    *,
+    threshold: float = 0.0,   # p ≤ threshold면 마스킹 (0.0이면 p==0만)
+    mode: str = "hard",       # "hard": sims[e]=0, "soft": sims[e]*factor
+    factor: float = 0.2
+) -> Dict[str, float]:
+    out = dict(sims)
+    for e, p in audio_probs.items():
+        try:
+            pv = float(p)
+        except Exception:
+            pv = 0.0
+        if pv <= threshold and e in out:
+            if mode == "hard":
+                out[e] = 0.0
+            else:
+                out[e] = max(0.0, out[e] * max(0.0, min(1.0, factor)))
+    return out
+
+
 def fuse_VA(audio_probs: Dict[str, float], text_score: float, text_magnitude: float) -> Dict[str, object]:
     """Fuse audio (emotion probabilities) and text (score,magnitude) into composite VA.
 
@@ -137,6 +206,14 @@ def fuse_VA(audio_probs: Dict[str, float], text_score: float, text_magnitude: fl
     sims: Dict[str, float] = {}
     for emo, (v_e, a_e) in EMOTION_VA.items():
         sims[emo] = _cosine_similarity((v_final, a_final), (v_e, a_e))
+    
+    # zero probability masking: audio_probs에서 0인 감정은 sims에서도 0으로 마스킹
+    sims = apply_zero_prob_mask(sims, audio_probs, threshold=0.0, mode="hard")
+    
+    # 모두 0이면 neutral만 1.0로 설정해 정규화 가능하게
+    if sum(sims.values()) <= 1e-12:
+        sims = {k: (1.0 if k == "neutral" else 0.0) for k in sims.keys()}
+    
     # surprise down-weighting before normalization
     sims["surprise"] = sims.get("surprise", 0.0) * 0.3
     per_emotion_bps = _normalize_to_bps(sims)
