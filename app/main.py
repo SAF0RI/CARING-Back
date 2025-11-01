@@ -26,8 +26,138 @@ from .dto import (
 from .care_service import CareService
 import random
 from .routers import composite_router
+from .exceptions import (
+    AppException, ValidationException, RuntimeException,
+    DatabaseException, OutOfMemoryException, InternalServerException
+)
+from fastapi.exceptions import RequestValidationError
+from pymysql import OperationalError as PyMysqlOperationalError
+from sqlalchemy.exc import SQLAlchemyError
+import traceback
 
 app = FastAPI(title="Caring API")
+
+
+# ============ 전역 예외 핸들러 ============
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request, exc: HTTPException):
+    """HTTPException 처리 - validation/runtime은 400, 기타는 그대로"""
+    status_code = exc.status_code
+    
+    # validation 오류나 client 오류는 400으로 통일
+    if status_code in (400, 401, 403, 404, 422):
+        status_code = 400
+    
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "status": "error",
+            "statusCode": status_code,
+            "message": exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+        }
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request, exc: RequestValidationError):
+    """FastAPI validation 오류 처리"""
+    errors = exc.errors()
+    message = "Validation error"
+    if errors:
+        first_error = errors[0]
+        field = ".".join(str(loc) for loc in first_error.get("loc", []))
+        msg = first_error.get("msg", "")
+        message = f"{field}: {msg}" if field else msg
+    
+    return JSONResponse(
+        status_code=400,
+        content={
+            "status": "error",
+            "statusCode": 400,
+            "message": message
+        }
+    )
+
+
+@app.exception_handler(AppException)
+async def app_exception_handler(request, exc: AppException):
+    """커스텀 애플리케이션 예외 처리"""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "status": "error",
+            "statusCode": exc.status_code,
+            "message": exc.message
+        }
+    )
+
+
+@app.exception_handler(PyMysqlOperationalError)
+async def mysql_exception_handler(request, exc: PyMysqlOperationalError):
+    """MySQL 데이터베이스 오류 처리"""
+    return JSONResponse(
+        status_code=500,
+        content={
+            "status": "error",
+            "statusCode": 500,
+            "message": f"Database error: {str(exc)}"
+        }
+    )
+
+
+@app.exception_handler(SQLAlchemyError)
+async def sqlalchemy_exception_handler(request, exc: SQLAlchemyError):
+    """SQLAlchemy 데이터베이스 오류 처리"""
+    return JSONResponse(
+        status_code=500,
+        content={
+            "status": "error",
+            "statusCode": 500,
+            "message": f"Database error: {str(exc)}"
+        }
+    )
+
+
+@app.exception_handler(MemoryError)
+async def memory_exception_handler(request, exc):
+    """메모리 부족 오류 처리"""
+    return JSONResponse(
+        status_code=500,
+        content={
+            "status": "error",
+            "statusCode": 500,
+            "message": f"Out of memory: {str(exc)}"
+        }
+    )
+
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request, exc: Exception):
+    """기타 모든 예외 처리"""
+    # 예외 타입에 따라 status_code 결정
+    exc_type = type(exc).__name__
+    exc_message = str(exc)
+    
+    # 런타임/검증 오류로 보이는 경우 400
+    if any(keyword in exc_type.lower() or keyword in exc_message.lower() 
+           for keyword in ['validation', 'value', 'type', 'attribute', 'key']):
+        status_code = 400
+    else:
+        # DB 오류나 기타는 500
+        status_code = 500
+    
+    # 디버깅을 위한 로그 출력
+    print(f"[Global Exception] {exc_type}: {exc_message}")
+    print(traceback.format_exc())
+    
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "status": "error",
+            "statusCode": status_code,
+            "message": exc_message
+        }
+    )
 
 users_router = APIRouter(prefix="/users", tags=["users"])
 care_router  = APIRouter(prefix="/care", tags=["care"])
@@ -420,6 +550,24 @@ async def test_s3_urls(limit: int = 10, expires_in: int = 3600):
         "count": len(urls),
         "sample": sample,
     }
+
+@test_router.get("/error")
+async def test_error(statusCode: int):
+    """테스트: 전역 예외 핸들러 테스트용 API
+    - statusCode: 400 또는 500을 받아서 해당 에러를 발생시킴
+    """
+    if statusCode == 400:
+        # validation/runtime 오류 시뮬레이션
+        raise HTTPException(status_code=400, detail="Test validation error: 잘못된 요청입니다.")
+    elif statusCode == 500:
+        # 내부 서버 오류 시뮬레이션
+        from .exceptions import DatabaseException
+        raise DatabaseException("Test database error: 데이터베이스 연결에 실패했습니다.")
+    else:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Invalid statusCode: {statusCode}. Only 400 or 500 are allowed."
+        )
 
 # ---------------- router 등록 ----------------
 app.include_router(users_router)
