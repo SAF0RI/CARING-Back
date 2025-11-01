@@ -335,10 +335,10 @@ class VoiceService:
                 # 생성 날짜
                 created_at = voice.created_at.isoformat() if voice.created_at else ""
                 
-                # 감정 (voice_analyze에서 top_emotion 가져오기)
+                # 감정 (voice_composite에서 top_emotion 가져오기, 없으면 null)
                 emotion = None
-                if voice.voice_analyze:
-                    emotion = voice.voice_analyze.top_emotion
+                if voice.voice_composite:
+                    emotion = voice.voice_composite.top_emotion
                 
                 # 질문 제목 (voice_question -> question.content)
                 question_title = None
@@ -383,7 +383,7 @@ class VoiceService:
             items = []
             for v in voices:
                 created_at = v.created_at.isoformat() if v.created_at else ""
-                emotion = v.voice_analyze.top_emotion if v.voice_analyze else None
+                emotion = v.voice_composite.top_emotion if v.voice_composite else None
                 items.append({
                     "voice_id": v.voice_id,
                     "created_at": created_at,
@@ -405,8 +405,8 @@ class VoiceService:
                 title = voice.questions[0].content
 
             top_emotion = None
-            if voice.voice_analyze:
-                top_emotion = voice.voice_analyze.top_emotion
+            if voice.voice_composite:
+                top_emotion = voice.voice_composite.top_emotion
 
             created_at = voice.created_at.isoformat() if voice.created_at else ""
 

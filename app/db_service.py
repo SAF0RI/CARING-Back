@@ -74,6 +74,7 @@ class DatabaseService:
                 joinedload(Voice.questions),
                 joinedload(Voice.voice_content),
                 joinedload(Voice.voice_analyze),
+                joinedload(Voice.voice_composite),
             )
             .first()
         )
@@ -83,10 +84,10 @@ class DatabaseService:
         return self.db.query(Voice).filter(Voice.voice_key == voice_key).first()
     
     def get_voices_by_user(self, user_id: int, skip: int = 0, limit: int = 50) -> List[Voice]:
-        """사용자별 음성 파일 목록 조회 (question 포함)"""
+        """사용자별 음성 파일 목록 조회 (question, voice_composite 포함)"""
         from sqlalchemy.orm import joinedload
         return self.db.query(Voice).filter(Voice.user_id == user_id)\
-            .options(joinedload(Voice.questions))\
+            .options(joinedload(Voice.questions), joinedload(Voice.voice_composite))\
             .order_by(Voice.created_at.desc()).offset(skip).limit(limit).all()
 
     def get_care_voices(self, care_username: str, skip: int = 0, limit: int = 20) -> List[Voice]:
@@ -105,7 +106,7 @@ class DatabaseService:
             self.db.query(Voice)
             .join(VoiceAnalyze, VoiceAnalyze.voice_id == Voice.voice_id)
             .filter(Voice.user_id == linked_user.user_id)
-            .options(joinedload(Voice.questions), joinedload(Voice.voice_analyze))
+            .options(joinedload(Voice.questions), joinedload(Voice.voice_analyze), joinedload(Voice.voice_composite))
             .order_by(Voice.created_at.desc())
             .offset(skip)
             .limit(limit)
