@@ -21,7 +21,8 @@ from .dto import (
     CareUserVoiceListResponse,
     EmotionAnalysisResponse, TranscribeResponse,
     SentimentResponse, EntitiesResponse, SyntaxResponse, ComprehensiveAnalysisResponse,
-    VoiceAnalyzePreviewResponse
+    VoiceAnalyzePreviewResponse,
+    UserInfoResponse, CareInfoResponse
 )
 from .care_service import CareService
 import random
@@ -266,6 +267,20 @@ async def sign_in(request: SigninRequest, role: str):
         raise HTTPException(status_code=401, detail=result["error"])
 
 # ============== users 영역 (음성 업로드/조회/삭제 등) =============
+@users_router.get("", response_model=UserInfoResponse)
+async def get_user_info(username: str):
+    """일반 유저 내정보 조회 (이름, username, 연결된 보호자 이름)"""
+    db = next(get_db())
+    auth_service = get_auth_service(db)
+    result = auth_service.get_user_info(username)
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "조회 실패"))
+    return UserInfoResponse(
+        name=result["name"],
+        username=result["username"],
+        connected_care_name=result.get("connected_care_name")
+    )
+
 @users_router.get("/voices", response_model=UserVoiceListResponse)
 async def get_user_voice_list(username: str):
     db = next(get_db())
@@ -366,6 +381,20 @@ async def get_random_question():
     return {"success": False, "question": None}
 
 # ============== care 영역 (보호자전용) =============
+@care_router.get("", response_model=CareInfoResponse)
+async def get_care_info(username: str):
+    """보호자 내정보 조회 (이름, username, 연결된 피보호자 이름)"""
+    db = next(get_db())
+    auth_service = get_auth_service(db)
+    result = auth_service.get_care_info(username)
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "조회 실패"))
+    return CareInfoResponse(
+        name=result["name"],
+        username=result["username"],
+        connected_user_name=result.get("connected_user_name")
+    )
+
 @care_router.get("/users/voices", response_model=CareUserVoiceListResponse)
 async def get_care_user_voice_list(care_username: str, skip: int = 0, limit: int = 20):
     db = next(get_db())

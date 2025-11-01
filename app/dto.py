@@ -34,6 +34,21 @@ class SigninResponse(BaseModel):
     role: str
 
 
+# 내정보 조회 관련 DTO
+class UserInfoResponse(BaseModel):
+    """일반 유저 내정보 조회 응답"""
+    name: str
+    username: str
+    connected_care_name: Optional[str] = None  # 연결된 보호자 이름 (없으면 null)
+
+
+class CareInfoResponse(BaseModel):
+    """보호자 내정보 조회 응답"""
+    name: str
+    username: str
+    connected_user_name: Optional[str] = None  # 연결된 피보호자 이름 (없으면 null)
+
+
 # 음성 관련 DTO
 class VoiceUploadRequest(BaseModel):
     folder: Optional[str] = None
