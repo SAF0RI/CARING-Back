@@ -2,8 +2,63 @@ from typing import Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
-from ..models import VoiceJobProcess
+from ..models import VoiceJobProcess, Voice, User
 from ..services.composite_service import CompositeService
+
+
+def _send_composite_completion_notification(session: Session, voice_id: int):
+    """voice_composite 생성 완료 시 연결된 CARE 사용자에게 알림 발송"""
+    # 1. voice 조회
+    voice = session.query(Voice).filter(Voice.voice_id == voice_id).first()
+    if not voice:
+        return
+    
+    # 2. USER 조회
+    user = session.query(User).filter(User.user_id == voice.user_id).first()
+    if not user or user.role != 'USER':
+        return  # USER만 처리
+    
+    # 3. 연결된 CARE 사용자 찾기 (connecting_user_code = user.username인 CARE)
+    care_user = session.query(User).filter(
+        User.role == 'CARE',
+        User.connecting_user_code == user.username
+    ).first()
+    
+    if not care_user:
+        return  # 연결된 CARE 사용자가 없으면 알림 발송 안 함
+    
+    # 4. FCM 알림 발송
+    try:
+        from ..services.fcm_service import FcmService
+        fcm_service = FcmService(session)
+        
+        # 알림 제목 및 내용
+        title = "음성 분석 완료"
+        body = f"{user.name}님의 음성 분석이 완료되었습니다."
+        
+        # 알림 데이터 (앱에서 음성 상세 페이지로 이동할 수 있도록)
+        data = {
+            "type": "voice_composite_completed",
+            "voice_id": str(voice_id),
+            "user_name": user.name,
+            "username": user.username
+        }
+        
+        # CARE 사용자에게 알림 발송
+        result = fcm_service.send_notification_to_user(
+            user_id=care_user.user_id,
+            title=title,
+            body=body,
+            data=data
+        )
+        
+        import logging
+        logging.info(f"FCM notification sent to CARE user (user_id={care_user.user_id}, username={care_user.username}): {result}")
+    
+    except Exception as e:
+        # FCM 서비스 초기화 실패 등은 무시 (로그만 남김)
+        import logging
+        logging.warning(f"FCM notification skipped (service not available): {str(e)}")
 
 
 def ensure_job_row(session: Session, voice_id: int) -> VoiceJobProcess:
@@ -54,6 +109,14 @@ def try_aggregate(session: Session, voice_id: int) -> bool:
         # release lock (keep done flags)
         row.locked = 0
         session.commit()
+        
+        # voice_composite 생성 완료 → 연결된 CARE 사용자에게 알림 발송
+        try:
+            _send_composite_completion_notification(session, voice_id)
+        except Exception as e:
+            # 알림 실패는 로그만 남기고 전체 프로세스는 계속 진행
+            import logging
+            logging.error(f"Failed to send FCM notification for voice_id={voice_id}: {str(e)}")
         
         # 로그 파일 저장 및 정리
         logger.save_to_file()

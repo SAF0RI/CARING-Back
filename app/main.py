@@ -22,7 +22,8 @@ from .dto import (
     EmotionAnalysisResponse, TranscribeResponse,
     SentimentResponse, EntitiesResponse, SyntaxResponse, ComprehensiveAnalysisResponse,
     VoiceAnalyzePreviewResponse,
-    UserInfoResponse, CareInfoResponse
+    UserInfoResponse, CareInfoResponse,
+    FcmTokenRegisterRequest, FcmTokenRegisterResponse, FcmTokenDeactivateResponse
 )
 from .care_service import CareService
 import random
@@ -272,6 +273,29 @@ async def sign_in(request: SigninRequest, role: str):
     else:
         raise HTTPException(status_code=401, detail=result["error"])
 
+
+@app.post("/sign-out")
+async def sign_out(username: str):
+    """로그아웃 및 FCM 토큰 비활성화"""
+    db = next(get_db())
+    
+    # 사용자 조회
+    from .auth_service import get_auth_service
+    auth_service = get_auth_service(db)
+    user = auth_service.get_user_by_username(username)
+    
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # FCM 토큰 비활성화
+    from .repositories.fcm_repo import deactivate_fcm_tokens_by_user
+    deactivated_count = deactivate_fcm_tokens_by_user(db, user.user_id)
+    
+    return {
+        "message": "로그아웃 완료",
+        "deactivated_tokens": deactivated_count
+    }
+
 # ============== users 영역 (음성 업로드/조회/삭제 등) =============
 @users_router.get("", response_model=UserInfoResponse)
 async def get_user_info(username: str):
@@ -356,9 +380,72 @@ async def get_user_emotion_weekly(username: str, month: str, week: int):
     db = next(get_db())
     voice_service = get_voice_service(db)
     result = voice_service.get_user_emotion_weekly_summary(username, month, week)
-    if not result.get("success"):
-        raise HTTPException(status_code=400, detail=result.get("message", "조회 실패"))
-    return result
+
+
+@users_router.post("/fcm/register", response_model=FcmTokenRegisterResponse)
+async def register_fcm_token(
+    request: FcmTokenRegisterRequest,
+    username: str  # RequestParam
+):
+    """FCM 토큰 등록 (로그인 후 호출)"""
+    db = next(get_db())
+    
+    # 사용자 조회
+    auth_service = get_auth_service(db)
+    user = auth_service.get_user_by_username(username)
+    
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # FCM 토큰 등록
+    from .repositories.fcm_repo import register_fcm_token
+    try:
+        token = register_fcm_token(
+            session=db,
+            user_id=user.user_id,
+            fcm_token=request.fcm_token,
+            device_id=request.device_id,
+            platform=request.platform
+        )
+        
+        return FcmTokenRegisterResponse(
+            message="FCM 토큰이 등록되었습니다.",
+            token_id=token.token_id,
+            is_active=bool(token.is_active)
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"FCM 토큰 등록 실패: {str(e)}")
+
+
+@users_router.post("/fcm/deactivate", response_model=FcmTokenDeactivateResponse)
+async def deactivate_fcm_token(
+    username: str,
+    device_id: Optional[str] = None  # 특정 기기만 비활성화 (없으면 전체)
+):
+    """FCM 토큰 비활성화 (특정 기기 또는 전체)"""
+    db = next(get_db())
+    
+    # 사용자 조회
+    auth_service = get_auth_service(db)
+    user = auth_service.get_user_by_username(username)
+    
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    from .repositories.fcm_repo import deactivate_fcm_tokens_by_user, deactivate_fcm_token_by_device
+    
+    if device_id:
+        # 특정 기기만 비활성화
+        success = deactivate_fcm_token_by_device(db, user.user_id, device_id)
+        count = 1 if success else 0
+    else:
+        # 전체 비활성화
+        count = deactivate_fcm_tokens_by_user(db, user.user_id)
+    
+    return FcmTokenDeactivateResponse(
+        message="FCM 토큰이 비활성화되었습니다.",
+        deactivated_count=count
+    )
 
 # 모든 질문 목록 반환
 @questions_router.get("")
