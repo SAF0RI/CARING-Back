@@ -112,4 +112,37 @@ CREATE TABLE IF NOT EXISTS `voice_composite` (
 CREATE TABLE IF NOT EXISTS `question` (
   `question_id` BIGINT PRIMARY KEY AUTO_INCREMENT,
   `question_category` VARCHAR(50) NOT NULL,
-  `
+  `content` TEXT NOT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT `check_question_category` CHECK (`question_category` IN ('emotion', 'stress', 'physical', 'social', 'self_reflection'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- VOICE_QUESTION
+CREATE TABLE IF NOT EXISTS `voice_question` (
+  `voice_question_id` BIGINT PRIMARY KEY AUTO_INCREMENT,
+  `voice_id` BIGINT NOT NULL,
+  `question_id` BIGINT NOT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT `fk_vq_voice` FOREIGN KEY (`voice_id`) REFERENCES `voice`(`voice_id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_vq_question` FOREIGN KEY (`question_id`) REFERENCES `question`(`question_id`) ON DELETE CASCADE,
+  UNIQUE KEY `uq_voice_question` (`voice_id`, `question_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- FCM_TOKEN
+CREATE TABLE IF NOT EXISTS `fcm_token` (
+  `token_id` BIGINT PRIMARY KEY AUTO_INCREMENT,
+  `user_id` BIGINT NOT NULL,
+  `fcm_token` VARCHAR(255) NOT NULL,
+  `device_id` VARCHAR(255) NULL,
+  `platform` VARCHAR(20) NULL,
+  `is_active` TINYINT NOT NULL DEFAULT 1,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT `fk_fcm_user` FOREIGN KEY (`user_id`) REFERENCES `user`(`user_id`) ON DELETE CASCADE,
+  UNIQUE KEY `uq_fcm_user_device` (`user_id`, `device_id`),
+  INDEX `idx_fcm_token` (`fcm_token`),
+  INDEX `idx_user_active` (`user_id`, `is_active`),
+  INDEX `idx_device_token` (`device_id`, `fcm_token`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+SET FOREIGN_KEY_CHECKS = 1;
