@@ -1,4 +1,5 @@
 import os
+import time
 from typing import Optional, Dict, Any, Tuple
 from sqlalchemy.orm import Session
 from fastapi import UploadFile, HTTPException
@@ -16,6 +17,7 @@ from .constants import VOICE_BASE_PREFIX, DEFAULT_UPLOAD_FOLDER
 from .db_service import get_db_service
 from .auth_service import get_auth_service
 from .repositories.job_repo import ensure_job_row, mark_text_done, mark_audio_done, try_aggregate
+from .performance_logger import get_performance_logger, clear_logger
 from sqlalchemy import func, extract
 from .models import VoiceAnalyze, Voice
 from datetime import datetime
@@ -78,7 +80,12 @@ class VoiceService:
         Returns:
             dict: 업로드 결과
         """
+        logger = None
         try:
+            # 성능 추적 시작
+            logger = get_performance_logger(0)  # voice_id는 나중에 설정
+            logger.log_step("시작")
+            
             # 1. 사용자 조회
             user = self.auth_service.get_user_by_username(username)
             if not user:
@@ -97,6 +104,7 @@ class VoiceService:
             # 3. 파일 읽기 및 WAV 변환
             file_content = await file.read()
             wav_content, wav_filename = self._convert_to_wav(file_content, file.filename)
+            logger.log_step("파일변환 완료")
             
             # 4. S3 업로드 (WAV 파일)
             bucket = os.getenv("S3_BUCKET_NAME")
@@ -112,6 +120,7 @@ class VoiceService:
             
             file_obj_for_s3 = BytesIO(wav_content)
             upload_fileobj(bucket=bucket, key=key, fileobj=file_obj_for_s3)
+            logger.log_step("s3업로드 완료")
             
             # 5. 데이터베이스 저장 (기본 정보만)
             # 파일 크기로 대략적인 duration 추정
@@ -128,8 +137,24 @@ class VoiceService:
             )
             # ensure job row
             ensure_job_row(self.db, voice.voice_id)
+            logger.log_step("데이터베이스 입력 완료")
+            
+            # logger를 voice_id로 다시 생성 (기존 시간 유지)
+            original_start = logger.start_time
+            clear_logger(0)
+            logger = get_performance_logger(voice.voice_id, preserve_time=original_start)
+            # 기존 단계들 복사
+            for step in ["시작", "파일변환 완료", "s3업로드 완료", "데이터베이스 입력 완료"]:
+                if step in logger.steps:
+                    continue
+                logger.steps[step] = time.time() - original_start
+            logger.voice_id = voice.voice_id
             
             # 6. 비동기 후처리 (STT→NLP, 음성 감정 분석) - WAV 데이터 사용
+            # 메모리 모니터링: 비동기 작업 시작 전
+            from .memory_monitor import log_memory_info
+            log_memory_info(f"Before async tasks - voice_id={voice.voice_id}")
+            
             asyncio.create_task(self._process_stt_and_nlp_background(wav_content, wav_filename, voice.voice_id))
             asyncio.create_task(self._process_audio_emotion_background(wav_content, wav_filename, voice.voice_id))
             
@@ -139,6 +164,9 @@ class VoiceService:
                 "voice_id": voice.voice_id
             }
         except Exception as e:
+            if logger:
+                logger.save_to_file()
+                clear_logger(logger.voice_id or 0)
             return {
                 "success": False,
                 "message": f"업로드 실패: {str(e)}"
@@ -146,8 +174,11 @@ class VoiceService:
     
     async def _process_stt_and_nlp_background(self, file_content: bytes, filename: str, voice_id: int):
         """STT → NLP 순차 처리 (백그라운드 비동기)"""
+        logger = get_performance_logger(voice_id)
         try:
-            # 1. STT 처리
+            logger.log_step("(비동기 작업) STT 작업 시작", category="async")
+            
+            # 1. STT 처리 (스레드 풀에서 실행하여 실제 병렬 처리 가능)
             file_obj_for_stt = BytesIO(file_content)
             
             class TempUploadFile:
@@ -157,7 +188,8 @@ class VoiceService:
                     self.content_type = "audio/m4a" if filename.endswith('.m4a') else "audio/wav"
             
             stt_file = TempUploadFile(file_obj_for_stt, filename)
-            stt_result = transcribe_voice(stt_file, "ko-KR")
+            # 동기 함수를 스레드에서 실행하여 블로킹 방지 및 병렬 처리 가능
+            stt_result = await asyncio.to_thread(transcribe_voice, stt_file, "ko-KR")
             
             if not stt_result.get("transcript"):
                 print(f"STT 변환 실패: voice_id={voice_id}")
@@ -165,9 +197,11 @@ class VoiceService:
             
             transcript = stt_result["transcript"]
             confidence = stt_result.get("confidence", 0)
+            logger.log_step("stt 추출 완료", category="async")
             
-            # 2. NLP 감정 분석 (STT 결과로)
-            nlp_result = analyze_text_sentiment(transcript, "ko")
+            # 2. NLP 감정 분석 (STT 결과로) - 스레드에서 실행
+            nlp_result = await asyncio.to_thread(analyze_text_sentiment, transcript, "ko")
+            logger.log_step("nlp 작업 완료", category="async")
             
             # 3. VoiceContent 저장 (STT 결과 + NLP 감정 분석 결과)
             score_bps = None
@@ -188,6 +222,8 @@ class VoiceService:
                 provider="google",
                 confidence_bps=int(confidence * 10000)
             )
+            logger.log_step("데이터베이스 입력 완료 (STT/NLP)", category="async")
+            
             # mark text done and try aggregate
             mark_text_done(self.db, voice_id)
             try_aggregate(self.db, voice_id)
@@ -199,7 +235,9 @@ class VoiceService:
 
     async def _process_audio_emotion_background(self, file_content: bytes, filename: str, voice_id: int):
         """음성 파일 자체의 감정 분석을 백그라운드에서 수행하여 voice_analyze 저장"""
+        logger = get_performance_logger(voice_id)
         try:
+            logger.log_step("(비동기 작업) 모델 작업 시작", category="async")
             file_obj = BytesIO(file_content)
 
             class TempUploadFile:
@@ -209,7 +247,8 @@ class VoiceService:
                     self.content_type = "audio/m4a" if filename.endswith('.m4a') else "audio/wav"
 
             emotion_file = TempUploadFile(file_obj, filename)
-            result = analyze_voice_emotion(emotion_file)
+            # CPU 집약적 작업을 스레드에서 실행하여 다른 요청과 병렬 처리 가능
+            result = await asyncio.to_thread(analyze_voice_emotion, emotion_file)
 
             # 디버그 로그: 전체 결과 요약
             try:
@@ -298,6 +337,9 @@ class VoiceService:
                 top_confidence_bps=top_conf_bps,
                 model_version=model_version,
             )
+            logger.log_step("모델 작업 완료", category="async")
+            logger.log_step("데이터베이스 입력 완료 (모델)", category="async")
+            
             # mark audio done and try aggregate
             mark_audio_done(self.db, voice_id)
             try_aggregate(self.db, voice_id)
@@ -458,7 +500,12 @@ class VoiceService:
         Returns:
             dict: 업로드 결과
         """
+        logger = None
         try:
+            # 성능 추적 시작
+            logger = get_performance_logger(0)  # voice_id는 나중에 설정
+            logger.log_step("시작")
+            
             # 1. 사용자 조회
             user = self.auth_service.get_user_by_username(username)
             if not user:
@@ -485,6 +532,7 @@ class VoiceService:
             # 4. 파일 읽기 및 WAV 변환
             file_content = await file.read()
             wav_content, wav_filename = self._convert_to_wav(file_content, file.filename)
+            logger.log_step("파일변환 완료")
             
             # 5. S3 업로드 (WAV 파일)
             bucket = os.getenv("S3_BUCKET_NAME")
@@ -500,6 +548,7 @@ class VoiceService:
             
             file_obj_for_s3 = BytesIO(wav_content)
             upload_fileobj(bucket=bucket, key=key, fileobj=file_obj_for_s3)
+            logger.log_step("s3업로드 완료")
             
             # 6. 데이터베이스 저장 (기본 정보만)
             file_size_mb = len(wav_content) / (1024 * 1024)
@@ -514,8 +563,28 @@ class VoiceService:
             )
             # ensure job row
             ensure_job_row(self.db, voice.voice_id)
+            logger.log_step("데이터베이스 입력 완료")
+            
+            # logger를 voice_id로 다시 생성 (기존 시간 유지)
+            original_start = logger.start_time
+            existing_steps = dict(logger.steps)
+            existing_order = list(logger.step_order)
+            existing_categories = dict(logger.step_category)
+            
+            clear_logger(0)
+            logger = get_performance_logger(voice.voice_id, preserve_time=original_start)
+            # 기존 단계들 복사 (order와 category 포함)
+            for step in existing_order:
+                elapsed = existing_steps[step]
+                category = existing_categories.get(step, "serial")
+                logger.add_step_with_time(step, elapsed, category)
+            logger.voice_id = voice.voice_id
             
             # 7. 비동기 후처리 (STT→NLP, 음성 감정 분석) - WAV 데이터 사용
+            # 메모리 모니터링: 비동기 작업 시작 전
+            from .memory_monitor import log_memory_info
+            log_memory_info(f"Before async tasks - voice_id={voice.voice_id}")
+            
             asyncio.create_task(self._process_stt_and_nlp_background(wav_content, wav_filename, voice.voice_id))
             asyncio.create_task(self._process_audio_emotion_background(wav_content, wav_filename, voice.voice_id))
             
@@ -530,6 +599,9 @@ class VoiceService:
             }
             
         except Exception as e:
+            if logger:
+                logger.save_to_file()
+                clear_logger(logger.voice_id or 0)
             return {
                 "success": False,
                 "message": f"업로드 실패: {str(e)}"

@@ -31,6 +31,9 @@ def mark_audio_done(session: Session, voice_id: int) -> None:
 def try_aggregate(session: Session, voice_id: int) -> bool:
     """Try to aggregate when both tasks are done; use a simple DB lock flag to prevent race."""
     try:
+        from ..performance_logger import get_performance_logger
+        logger = get_performance_logger(voice_id)
+        
         row = session.query(VoiceJobProcess).with_for_update().filter(VoiceJobProcess.voice_id == voice_id).first()
         if not row:
             return False
@@ -41,12 +44,22 @@ def try_aggregate(session: Session, voice_id: int) -> bool:
         # acquire lock
         row.locked = 1
         session.commit()
+        
+        logger.log_step("voice_composite 입력 시작", category="async")
         # do aggregate
         service = CompositeService(session)
         service.compute_and_save_composite(voice_id)
+        logger.log_step("완료", category="async")
+        
         # release lock (keep done flags)
         row.locked = 0
         session.commit()
+        
+        # 로그 파일 저장 및 정리
+        logger.save_to_file()
+        from ..performance_logger import clear_logger
+        clear_logger(voice_id)
+        
         return True
     except SQLAlchemyError:
         session.rollback()

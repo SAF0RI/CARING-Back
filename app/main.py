@@ -211,6 +211,12 @@ async def init_database():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"데이터베이스 초기화 실패: {str(e)}")
 
+@admin_router.get("/memory")
+async def get_memory_status():
+    """메모리 사용량 조회"""
+    from .memory_monitor import get_memory_info
+    return get_memory_info()
+
 @admin_router.get("/db/status")
 async def get_database_status():
     try:
@@ -579,6 +585,13 @@ async def test_s3_urls(limit: int = 10, expires_in: int = 3600):
         "count": len(urls),
         "sample": sample,
     }
+
+@test_router.get("/memory")
+async def test_memory():
+    """테스트: 메모리 사용량 조회"""
+    from .memory_monitor import get_memory_info, log_memory_info
+    log_memory_info("test/memory endpoint")
+    return get_memory_info()
 
 @test_router.get("/error")
 async def test_error(statusCode: int):
