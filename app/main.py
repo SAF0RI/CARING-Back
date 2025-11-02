@@ -1,6 +1,6 @@
 import os
 from typing import Optional
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form, APIRouter
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, APIRouter, Depends
 from fastapi.responses import JSONResponse
 from typing import List
 from .s3_service import upload_fileobj, list_bucket_objects, list_bucket_objects_with_urls
@@ -9,6 +9,7 @@ from .emotion_service import analyze_voice_emotion
 from .stt_service import transcribe_voice
 from .nlp_service import analyze_text_sentiment, analyze_text_entities, analyze_text_syntax
 from .database import create_tables, engine, get_db
+from sqlalchemy.orm import Session
 from .models import Base, Question, VoiceComposite
 from .auth_service import get_auth_service
 from .voice_service import get_voice_service
@@ -232,8 +233,7 @@ async def get_database_status():
 
 # ============ Auth 전용(signup, signin)은 루트에 남김 ===========
 @app.post("/sign-up", response_model=SignupResponse)
-async def sign_up(request: SignupRequest):
-    db = next(get_db())
+async def sign_up(request: SignupRequest, db: Session = Depends(get_db)):
     auth_service = get_auth_service(db)
     result = auth_service.signup(
         name=request.name,
@@ -255,8 +255,7 @@ async def sign_up(request: SignupRequest):
         raise HTTPException(status_code=400, detail=result["error"])
 
 @app.post("/sign-in", response_model=SigninResponse)
-async def sign_in(request: SigninRequest, role: str):
-    db = next(get_db())
+async def sign_in(request: SigninRequest, role: str, db: Session = Depends(get_db)):
     auth_service = get_auth_service(db)
     result = auth_service.signin(
         username=request.username,
@@ -275,9 +274,8 @@ async def sign_in(request: SigninRequest, role: str):
 
 
 @app.post("/sign-out")
-async def sign_out(username: str):
+async def sign_out(username: str, db: Session = Depends(get_db)):
     """로그아웃 및 FCM 토큰 비활성화"""
-    db = next(get_db())
     
     # 사용자 조회
     from .auth_service import get_auth_service
@@ -298,9 +296,8 @@ async def sign_out(username: str):
 
 # ============== users 영역 (음성 업로드/조회/삭제 등) =============
 @users_router.get("", response_model=UserInfoResponse)
-async def get_user_info(username: str):
+async def get_user_info(username: str, db: Session = Depends(get_db)):
     """일반 유저 내정보 조회 (이름, username, 연결된 보호자 이름)"""
-    db = next(get_db())
     auth_service = get_auth_service(db)
     result = auth_service.get_user_info(username)
     if not result.get("success"):
@@ -312,15 +309,13 @@ async def get_user_info(username: str):
     )
 
 @users_router.get("/voices", response_model=UserVoiceListResponse)
-async def get_user_voice_list(username: str):
-    db = next(get_db())
+async def get_user_voice_list(username: str, db: Session = Depends(get_db)):
     voice_service = get_voice_service(db)
     result = voice_service.get_user_voice_list(username)
     return UserVoiceListResponse(success=result["success"], voices=result.get("voices", []))
 
 @users_router.get("/voices/{voice_id}", response_model=UserVoiceDetailResponse)
-async def get_user_voice_detail(voice_id: int, username: str):
-    db = next(get_db())
+async def get_user_voice_detail(voice_id: int, username: str, db: Session = Depends(get_db)):
     voice_service = get_voice_service(db)
     result = voice_service.get_user_voice_detail(voice_id, username)
     if not result.get("success"):
@@ -335,8 +330,7 @@ async def get_user_voice_detail(voice_id: int, username: str):
     )
 
 @users_router.delete("/voices/{voice_id}")
-async def delete_user_voice(voice_id: int, username: str):
-    db = next(get_db())
+async def delete_user_voice(voice_id: int, username: str, db: Session = Depends(get_db)):
     voice_service = get_voice_service(db)
     result = voice_service.delete_user_voice(voice_id, username)
     if result.get("success"):
@@ -348,8 +342,8 @@ async def upload_voice_with_question(
     file: UploadFile = File(...),
     question_id: int = Form(...),
     username: str = None,
+    db: Session = Depends(get_db)
 ):
-    db = next(get_db())
     voice_service = get_voice_service(db)
     if not username:
         raise HTTPException(status_code=400, detail="username is required as query parameter")
@@ -365,9 +359,8 @@ async def upload_voice_with_question(
         raise HTTPException(status_code=400, detail=result["message"])
 
 @users_router.get("/voices/analyzing/frequency")
-async def get_user_emotion_frequency(username: str, month: str):
+async def get_user_emotion_frequency(username: str, month: str, db: Session = Depends(get_db)):
     """사용자 본인의 한달간 감정 빈도수 집계"""
-    db = next(get_db())
     voice_service = get_voice_service(db)
     result = voice_service.get_user_emotion_monthly_frequency(username, month)
     if not result.get("success"):
@@ -375,20 +368,22 @@ async def get_user_emotion_frequency(username: str, month: str):
     return result
 
 @users_router.get("/voices/analyzing/weekly")
-async def get_user_emotion_weekly(username: str, month: str, week: int):
+async def get_user_emotion_weekly(username: str, month: str, week: int, db: Session = Depends(get_db)):
     """사용자 본인의 월/주차별 요일별 top 감정 요약"""
-    db = next(get_db())
     voice_service = get_voice_service(db)
     result = voice_service.get_user_emotion_weekly_summary(username, month, week)
 
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("message", "조회 실패"))
+    return result
 
 @users_router.post("/fcm/register", response_model=FcmTokenRegisterResponse)
 async def register_fcm_token(
     request: FcmTokenRegisterRequest,
-    username: str  # RequestParam
+    username: str,  # RequestParam
+    db: Session = Depends(get_db)
 ):
     """FCM 토큰 등록 (로그인 후 호출)"""
-    db = next(get_db())
     
     # 사용자 조회
     auth_service = get_auth_service(db)
@@ -420,10 +415,10 @@ async def register_fcm_token(
 @users_router.post("/fcm/deactivate", response_model=FcmTokenDeactivateResponse)
 async def deactivate_fcm_token(
     username: str,
-    device_id: Optional[str] = None  # 특정 기기만 비활성화 (없으면 전체)
+    device_id: Optional[str] = None,  # 특정 기기만 비활성화 (없으면 전체)
+    db: Session = Depends(get_db)
 ):
     """FCM 토큰 비활성화 (특정 기기 또는 전체)"""
-    db = next(get_db())
     
     # 사용자 조회
     auth_service = get_auth_service(db)
@@ -449,8 +444,7 @@ async def deactivate_fcm_token(
 
 # 모든 질문 목록 반환
 @questions_router.get("")
-async def get_questions():
-    db = next(get_db())
+async def get_questions(db: Session = Depends(get_db)):
     questions = db.query(Question).all()
     results = [
         {"question_id": q.question_id, "question_category": q.question_category, "content": q.content}
@@ -460,8 +454,7 @@ async def get_questions():
 
 # 질문 랜덤 반환
 @questions_router.get("/random")
-async def get_random_question():
-    db = next(get_db())
+async def get_random_question(db: Session = Depends(get_db)):
     question_count = db.query(Question).count()
     if question_count == 0:
         return {"success": False, "question": None}
@@ -475,9 +468,8 @@ async def get_random_question():
 
 # ============== care 영역 (보호자전용) =============
 @care_router.get("", response_model=CareInfoResponse)
-async def get_care_info(username: str):
+async def get_care_info(username: str, db: Session = Depends(get_db)):
     """보호자 내정보 조회 (이름, username, 연결된 피보호자 이름)"""
-    db = next(get_db())
     auth_service = get_auth_service(db)
     result = auth_service.get_care_info(username)
     if not result.get("success"):
@@ -489,20 +481,18 @@ async def get_care_info(username: str):
     )
 
 @care_router.get("/users/voices", response_model=CareUserVoiceListResponse)
-async def get_care_user_voice_list(care_username: str, skip: int = 0, limit: int = 20):
-    db = next(get_db())
+async def get_care_user_voice_list(care_username: str, skip: int = 0, limit: int = 20, db: Session = Depends(get_db)):
     voice_service = get_voice_service(db)
     result = voice_service.get_care_voice_list(care_username, skip=skip, limit=limit)
     return CareUserVoiceListResponse(success=result["success"], voices=result.get("voices", []))
 
 @care_router.get("/users/voices/analyzing/frequency")
 async def get_emotion_monthly_frequency(
-    care_username: str, month: str
+    care_username: str, month: str, db: Session = Depends(get_db)
 ):
     """
     보호자 페이지: 연결된 유저의 한달간 감정 빈도수 집계 (CareService 내부 로직 사용)
     """
-    db = next(get_db())
     care_service = CareService(db)
     return care_service.get_emotion_monthly_frequency(care_username, month)
 
@@ -510,19 +500,18 @@ async def get_emotion_monthly_frequency(
 async def get_emotion_weekly_summary(
     care_username: str,
     month: str,
-    week: int
+    week: int,
+    db: Session = Depends(get_db)
 ):
     """보호자페이지 - 연결유저 월/주차별 요일 top 감정 통계"""
-    db = next(get_db())
     care_service = CareService(db)
     return care_service.get_emotion_weekly_summary(care_username, month, week)
 
 @care_router.get("/voices/{voice_id}/composite")
-async def get_care_voice_composite(voice_id: int, care_username: str):
+async def get_care_voice_composite(voice_id: int, care_username: str, db: Session = Depends(get_db)):
     """보호자 페이지: 특정 음성의 융합 지표 조회 (감정 퍼센트 포함)
     - care_username 검증: CARE 역할이며 연결된 user의 voice인지 확인
     """
-    db = next(get_db())
 
     # 보호자 검증 및 연결 유저 확인
     auth_service = get_auth_service(db)
