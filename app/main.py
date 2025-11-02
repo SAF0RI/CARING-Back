@@ -231,6 +231,63 @@ async def get_database_status():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"상태 확인 실패: {str(e)}")
 
+@admin_router.get("/db/pool")
+async def get_connection_pool_status():
+    """커넥션 풀 상태 조회"""
+    try:
+        pool = engine.pool
+        
+        # 풀 설정 정보
+        pool_config = {
+            "pool_class": pool.__class__.__name__,
+        }
+        
+        # 풀 크기 설정 (기본값 5)
+        if hasattr(pool, "_pool_size"):
+            pool_config["pool_size"] = pool._pool_size
+        else:
+            pool_config["pool_size"] = 5  # SQLAlchemy 기본값
+            
+        # 최대 오버플로우 설정 (기본값 10)
+        if hasattr(pool, "_max_overflow"):
+            pool_config["max_overflow"] = pool._max_overflow
+        else:
+            pool_config["max_overflow"] = 10  # SQLAlchemy 기본값
+        
+        # 현재 풀 상태
+        current_size = pool.size() if hasattr(pool, "size") else 0
+        checked_out = pool.checkedout() if hasattr(pool, "checkedout") else 0
+        overflow = pool.overflow() if hasattr(pool, "overflow") else 0
+        checked_in = pool.checkedin() if hasattr(pool, "checkedin") else 0
+        
+        # 사용 가능한 연결 수
+        available = current_size - checked_out
+        
+        # 전체 용량 및 사용률
+        total_capacity = pool_config["pool_size"] + pool_config["max_overflow"]
+        total_in_use = checked_out + overflow
+        usage_percentage = round((total_in_use / total_capacity * 100), 2) if total_capacity > 0 else 0.0
+        
+        return {
+            "success": True,
+            "pool_config": pool_config,
+            "current_status": {
+                "pool_size": current_size,
+                "checked_out": checked_out,
+                "checked_in": checked_in,
+                "overflow": overflow,
+                "available": max(0, available),
+            },
+            "summary": {
+                "total_capacity": total_capacity,
+                "total_in_use": total_in_use,
+                "total_available": max(0, total_capacity - total_in_use),
+                "usage_percentage": usage_percentage,
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"커넥션 풀 상태 확인 실패: {str(e)}")
+
 # ============ Auth 전용(signup, signin)은 루트에 남김 ===========
 @app.post("/sign-up", response_model=SignupResponse)
 async def sign_up(request: SignupRequest, db: Session = Depends(get_db)):
