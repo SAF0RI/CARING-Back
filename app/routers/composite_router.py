@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..services.composite_service import CompositeService
@@ -8,8 +8,7 @@ router = APIRouter(tags=["composite"])
 
 
 @router.post("/voices/{voice_id}/composite")
-async def recompute_voice_composite(voice_id: int):
-    db = next(get_db())
+async def recompute_voice_composite(voice_id: int, db: Session = Depends(get_db)):
     service = CompositeService(db)
     try:
         return service.compute_and_save_composite(voice_id)
@@ -18,8 +17,7 @@ async def recompute_voice_composite(voice_id: int):
 
 
 @router.get("/voices/{voice_id}/composite")
-async def get_voice_composite(voice_id: int):
-    db = next(get_db())
+async def get_voice_composite(voice_id: int, db: Session = Depends(get_db)):
     row: VoiceComposite = db.query(VoiceComposite).filter(VoiceComposite.voice_id == voice_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="not found")

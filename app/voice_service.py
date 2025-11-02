@@ -124,8 +124,10 @@ class VoiceService:
             
             # 5. 데이터베이스 저장 (기본 정보만)
             # 파일 크기로 대략적인 duration 추정
-            file_size_mb = len(wav_content) / (1024 * 1024)
-            estimated_duration_ms = int(file_size_mb * 1000)  # 대략적인 추정
+            with sf.SoundFile(BytesIO(wav_content)) as wav_file:
+                frames = len(wav_file)
+                sr = wav_file.samplerate
+            estimated_duration_ms = int((frames / sr) * 1000)
             
             # Voice 저장 (STT 없이 기본 정보만)
             voice = self.db_service.create_voice(

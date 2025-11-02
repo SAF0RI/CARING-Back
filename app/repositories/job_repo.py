@@ -96,19 +96,26 @@ def try_aggregate(session: Session, voice_id: int) -> bool:
             return False
         if not (row.text_done and row.audio_done):
             return False
-        # acquire lock
+
         row.locked = 1
         session.commit()
-        
-        logger.log_step("voice_composite 입력 시작", category="async")
-        # do aggregate
-        service = CompositeService(session)
-        service.compute_and_save_composite(voice_id)
-        logger.log_step("완료", category="async")
-        
-        # release lock (keep done flags)
-        row.locked = 0
-        session.commit()
+        try:
+            logger.log_step("voice_composite 입력 시작", category="async")
+            service = CompositeService(session)
+            service.compute_and_save_composite(voice_id)
+            logger.log_step("완료", category="async")
+        except Exception:
+            session.rollback()
+            refreshed = session.query(VoiceJobProcess).with_for_update().filter(
+                VoiceJobProcess.voice_id == voice_id
+            ).first()
+            if refreshed and refreshed.locked:
+                refreshed.locked = 0
+                session.commit()
+            raise
+        else:
+            row.locked = 0
+            session.commit()
         
         # voice_composite 생성 완료 → 연결된 CARE 사용자에게 알림 발송
         try:
@@ -117,7 +124,7 @@ def try_aggregate(session: Session, voice_id: int) -> bool:
             # 알림 실패는 로그만 남기고 전체 프로세스는 계속 진행
             import logging
             logging.error(f"Failed to send FCM notification for voice_id={voice_id}: {str(e)}")
-        
+
         # 로그 파일 저장 및 정리
         logger.save_to_file()
         from ..performance_logger import clear_logger

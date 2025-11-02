@@ -48,7 +48,7 @@ def deactivate_fcm_tokens_by_user(session: Session, user_id: int) -> int:
     count = session.query(FcmToken).filter(
         FcmToken.user_id == user_id,
         FcmToken.is_active == 1
-    ).update({"is_active": 0})
+    ).update({"is_active": 0}, synchronize_session=False)
     session.commit()
     return count
 

@@ -170,6 +170,6 @@ class FcmService:
         from ..models import FcmToken
         self.db.query(FcmToken).filter(
             FcmToken.fcm_token.in_(invalid_tokens)
-        ).update({"is_active": 0})
+        ).update({"is_active": 0}, synchronize_session=False)
         self.db.commit()
 
