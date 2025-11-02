@@ -1,0 +1,357 @@
+# CARING-Back 프로젝트 코딩 규칙
+
+## 🔴 CRITICAL: 데이터베이스 세션 관리
+
+### ❌ 절대 금지
+```python
+# 절대 사용하지 말 것!
+async def endpoint():
+    db = next(get_db())  # ❌ Connection leak 발생!
+    # ...
+```
+
+**문제점:**
+- `next(get_db())`는 generator를 완전히 소비하지 않아 `finally` 블록의 `db.close()`가 실행되지 않음
+- 세션이 connection pool에 반환되지 않아 connection leak 발생
+- 장시간 운영 시 데이터베이스 연결 고갈로 서비스 중단 가능
+
+### ✅ 올바른 사용 방법
+```python
+# 반드시 Depends 사용
+from fastapi import Depends
+from sqlalchemy.orm import Session
+from .database import get_db
+
+async def endpoint(db: Session = Depends(get_db)):
+    # FastAPI가 자동으로 세션을 정리함
+    # 예외 발생 시에도 자동으로 db.close() 호출됨
+    # ...
+```
+
+**이유:**
+- FastAPI의 `Depends`는 generator를 완전히 소비하여 `finally` 블록 실행 보장
+- 예외 발생 시에도 자동으로 세션 정리 및 connection pool 반환
+- FastAPI 공식 권장 방식
+
+### 📋 모든 엔드포인트에 적용
+- **모든 FastAPI 라우터 엔드포인트**에서 데이터베이스 세션을 사용할 때는 반드시 `Depends(get_db)` 사용
+- 새 엔드포인트 추가 시 이 규칙 준수 필수
+- 리팩토링 시 기존 `next(get_db())` 패턴 발견 시 즉시 수정
+
+## 🔴 CRITICAL: FastAPI 의존성 주입 (Dependency Injection)
+
+### ❌ 절대 금지: 엔드포인트에서 직접 인스턴스화
+```python
+# 절대 사용하지 말 것!
+async def endpoint(db: Session = Depends(get_db)):
+    auth_service = get_auth_service(db)  # ❌ 잘못된 방식!
+    voice_service = get_voice_service(db)  # ❌ 잘못된 방식!
+    # ...
+```
+
+**문제점:**
+- FastAPI의 의존성 주입 시스템을 우회하여 사용
+- 테스트 어려움 (Mock 주입 불가)
+- 의존성 관리가 명확하지 않음
+- 코드 재사용성 저하
+
+### ✅ 올바른 사용 방법: 의존성 주입 활용
+
+#### 방법 1: 의존성 함수로 주입 (권장)
+```python
+from fastapi import Depends
+from sqlalchemy.orm import Session
+from .database import get_db
+from .auth_service import get_auth_service
+
+# 의존성 체인 구성
+def get_auth_service_dep(db: Session = Depends(get_db)):
+    """AuthService 의존성 함수"""
+    return get_auth_service(db)
+
+# 엔드포인트에서 사용
+async def sign_up(
+    request: SignupRequest,
+    db: Session = Depends(get_db),
+    auth_service: AuthService = Depends(get_auth_service_dep)
+):
+    # auth_service는 이미 주입됨
+    result = auth_service.signup(...)
+    # ...
+```
+
+#### 방법 2: 의존성 체인 직접 구성 (간결함)
+```python
+from fastapi import Depends
+from sqlalchemy.orm import Session
+from .database import get_db
+from .auth_service import AuthService
+
+def get_auth_service_dep(db: Session = Depends(get_db)) -> AuthService:
+    """AuthService 의존성 함수"""
+    return AuthService(db)
+
+async def sign_up(
+    request: SignupRequest,
+    auth_service: AuthService = Depends(get_auth_service_dep)
+):
+    # db도 필요하면 auth_service_dep에서 자동으로 주입됨
+    result = auth_service.signup(...)
+    # ...
+```
+
+#### 방법 3: 중첩 의존성 (복잡한 경우)
+```python
+from typing import Annotated
+from fastapi import Depends
+from sqlalchemy.orm import Session
+from .database import get_db
+from .auth_service import AuthService
+from .voice_service import VoiceService
+
+# 타입 별칭으로 의존성 명확화
+DbSession = Annotated[Session, Depends(get_db)]
+
+def get_auth_service_dep(db: DbSession) -> AuthService:
+    return AuthService(db)
+
+def get_voice_service_dep(db: DbSession) -> VoiceService:
+    return VoiceService(db)
+
+async def endpoint(
+    auth_service: AuthService = Depends(get_auth_service_dep),
+    voice_service: VoiceService = Depends(get_voice_service_dep)
+):
+    # 두 서비스 모두 주입됨
+    # ...
+```
+
+### 📋 의존성 주입 규칙
+
+1. **모든 Service와 Repository는 Depends로 주입받아야 함**
+   - 엔드포인트에서 `get_xxx_service(db)` 직접 호출 금지
+   - 엔드포인트에서 `get_xxx_repo()` 직접 호출 금지
+
+2. **의존성 함수 명명 규칙**
+   - Service 의존성: `get_{service_name}_dep` (예: `get_auth_service_dep`)
+   - Repository 의존성: `get_{repo_name}_dep` (예: `get_voice_repo_dep`)
+   - 타입 힌팅 필수
+
+3. **의존성 체인 구성**
+   - 데이터베이스 세션은 최상위 의존성
+   - Service는 Session에 의존
+   - Repository는 Session에 의존
+   - Service가 Repository를 사용할 경우, Service 생성자에서 주입
+
+4. **의존성 함수 위치**
+   - 각 Service/Repository 파일에 의존성 함수도 함께 정의
+   - 또는 별도 `dependencies.py` 파일에 모음
+
+### 🔄 기존 코드 리팩토링 예시
+
+```python
+# ❌ 기존 (잘못된 방식)
+@app.post("/sign-up")
+async def sign_up(request: SignupRequest, db: Session = Depends(get_db)):
+    auth_service = get_auth_service(db)  # 직접 인스턴스화
+    result = auth_service.signup(...)
+    # ...
+
+# ✅ 리팩토링 후 (올바른 방식)
+def get_auth_service_dep(db: Session = Depends(get_db)) -> AuthService:
+    return get_auth_service(db)
+
+@app.post("/sign-up")
+async def sign_up(
+    request: SignupRequest,
+    auth_service: AuthService = Depends(get_auth_service_dep)
+):
+    result = auth_service.signup(...)
+    # ...
+```
+
+### 📝 의존성 함수 작성 가이드
+
+#### Service 의존성 함수 예시
+```python
+# app/auth_service.py
+from fastapi import Depends
+from sqlalchemy.orm import Session
+from .database import get_db
+
+class AuthService:
+    def __init__(self, db: Session):
+        self.db = db
+    # ...
+
+def get_auth_service(db: Session) -> AuthService:
+    """팩토리 함수"""
+    return AuthService(db)
+
+# 의존성 함수 추가
+def get_auth_service_dep(db: Session = Depends(get_db)) -> AuthService:
+    """FastAPI 의존성 주입용 함수"""
+    return get_auth_service(db)
+```
+
+#### 여러 의존성을 가진 엔드포인트
+```python
+async def complex_endpoint(
+    db: Session = Depends(get_db),
+    auth_service: AuthService = Depends(get_auth_service_dep),
+    voice_service: VoiceService = Depends(get_voice_service_dep)
+):
+    # 모든 의존성이 자동으로 주입됨
+    # ...
+```
+
+### 🧪 테스트에서의 이점
+
+의존성 주입을 사용하면 테스트가 쉬워짐:
+
+```python
+# 테스트에서 Mock 주입 가능
+def test_endpoint():
+    mock_auth_service = Mock(spec=AuthService)
+    mock_auth_service.signup.return_value = {"success": True, ...}
+    
+    # 의존성 오버라이드
+    app.dependency_overrides[get_auth_service_dep] = lambda: mock_auth_service
+    
+    response = client.post("/sign-up", json={...})
+    # ...
+```
+
+## FastAPI 베스트 프랙티스
+
+### 엔드포인트 정의
+- 라우터별로 `APIRouter` 사용하여 코드 모듈화
+- 엔드포인트 함수는 `async def` 사용
+- Response model은 명시적으로 정의 (`response_model` 파라미터 사용)
+
+### 예외 처리
+- 커스텀 예외는 `AppException` 계층 구조 사용
+- 전역 예외 핸들러로 일관된 에러 응답 형식 유지
+- 데이터베이스 예외는 `SQLAlchemyError` 핸들러로 처리
+
+### 타입 힌팅
+- 모든 함수 파라미터와 반환값에 타입 힌팅 사용
+- `Optional[Type]` 사용 시 `None` 처리 명확히 구현
+- DTO는 Pydantic 모델 사용
+
+## SQLAlchemy 세션 사용 규칙
+
+### Repository 패턴
+- 데이터베이스 접근 로직은 `repositories/` 디렉토리에 분리
+- Repository 함수는 `session: Session`을 첫 번째 파라미터로 받음
+- 비즈니스 로직은 `services/` 디렉토리에 위치
+
+### 세션 관리
+- 세션은 엔드포인트 레벨에서만 생성 (`Depends(get_db)`)
+- Service와 Repository는 생성자나 함수 파라미터로 세션을 받음
+- 세션을 직접 생성(`SessionLocal()`)하는 것은 금지
+
+### 트랜잭션 처리
+- `autocommit=False`로 설정되어 있으므로 명시적 `commit()` 필요
+- 예외 발생 시 `rollback()` 호출하여 데이터 무결성 보장
+- 트랜잭션 경계는 엔드포인트 레벨에서 관리
+
+## 코드 스타일
+
+### Import 순서
+1. 표준 라이브러리 (`os`, `typing` 등)
+2. 서드파티 라이브러리 (`fastapi`, `sqlalchemy` 등)
+3. 로컬 모듈 (`from . import ...`)
+
+### 함수 네이밍
+- 엔드포인트: `snake_case` (예: `get_user_info`)
+- 클래스: `PascalCase` (예: `VoiceService`)
+- 상수: `UPPER_SNAKE_CASE` (예: `DB_HOST`)
+
+### 주석 및 문서화
+- 복잡한 로직은 주석으로 설명
+- 함수 docstring 사용 권장
+- 중요한 비즈니스 로직은 주석으로 설명
+
+## 보안 및 성능
+
+### 환경 변수
+- 민감한 정보는 환경 변수로 관리 (`.env` 파일)
+- 데이터베이스 연결 정보는 절대 하드코딩 금지
+
+### Connection Pool
+- `pool_pre_ping=True`: 연결 상태 자동 확인
+- `pool_recycle=3600`: 1시간마다 연결 재생성으로 stale connection 방지
+
+### 메모리 관리
+- 대용량 파일 처리 시 스트리밍 방식 사용
+- 메모리 모니터링 로직 활용 (`memory_monitor.py`)
+
+## 검토 체크리스트
+
+새 코드 작성 시 다음을 확인:
+
+### 데이터베이스 세션
+- [ ] 데이터베이스 세션을 `Depends(get_db)`로 받았는가?
+- [ ] `next(get_db())` 같은 패턴이 없는가?
+- [ ] 예외 발생 시 세션이 정리되는가?
+
+### 의존성 주입
+- [ ] Service를 엔드포인트에서 직접 인스턴스화하지 않았는가?
+- [ ] Repository를 엔드포인트에서 직접 인스턴스화하지 않았는가?
+- [ ] 모든 Service와 Repository가 `Depends`로 주입되는가?
+- [ ] 의존성 함수의 타입 힌팅이 명확한가?
+- [ ] 의존성 체인이 올바르게 구성되었는가? (Session → Service/Repository)
+
+### 코드 품질
+- [ ] 타입 힌팅이 명확한가?
+- [ ] 환경 변수를 올바르게 사용했는가?
+- [ ] 커스텀 예외를 적절히 사용했는가?
+
+## 리팩토링 가이드
+
+### 1. 데이터베이스 세션 관리
+
+기존 코드에서 다음 패턴을 발견하면 즉시 수정:
+
+```python
+# ❌ 발견 시 즉시 수정 필요
+db = next(get_db())
+
+# ✅ 올바른 형태로 변경
+async def function(..., db: Session = Depends(get_db)):
+```
+
+### 2. 의존성 주입 적용
+
+기존 코드에서 다음 패턴을 발견하면 즉시 수정:
+
+```python
+# ❌ 발견 시 즉시 수정 필요
+async def endpoint(db: Session = Depends(get_db)):
+    auth_service = get_auth_service(db)  # 직접 인스턴스화
+    voice_service = get_voice_service(db)  # 직접 인스턴스화
+    # ...
+
+# ✅ 올바른 형태로 변경
+def get_auth_service_dep(db: Session = Depends(get_db)) -> AuthService:
+    return get_auth_service(db)
+
+def get_voice_service_dep(db: Session = Depends(get_db)) -> VoiceService:
+    return get_voice_service(db)
+
+async def endpoint(
+    auth_service: AuthService = Depends(get_auth_service_dep),
+    voice_service: VoiceService = Depends(get_voice_service_dep)
+):
+    # 의존성이 자동으로 주입됨
+    # ...
+```
+
+### 3. 리팩토링 우선순위
+
+1. **최우선**: `db = next(get_db())` → `Depends(get_db)` (Connection leak 위험)
+2. **높음**: 엔드포인트 내 `get_xxx_service(db)` 직접 호출 → 의존성 주입
+3. **중간**: 엔드포인트 내 `get_xxx_repo()` 직접 호출 → 의존성 주입
+4. **낮음**: 코드 스타일 및 문서화 개선
+

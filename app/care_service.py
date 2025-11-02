@@ -20,7 +20,7 @@ class CareService:
             care = self.auth_service.get_user_by_username(care_username)
             if not care or care.role != 'CARE' or not care.connecting_user_code:
                 return {"success": False, "frequency": {}, "message": "Care user not found or no connection."}
-            user = self.db.query(User).filter(User.user_code == care.connecting_user_code).first()
+            user = self.db.query(User).filter(User.username == care.connecting_user_code).first()
             if not user:
                 return {"success": False, "frequency": {}, "message": "Connected user not found."}
             try:
@@ -55,7 +55,7 @@ class CareService:
             care = self.auth_service.get_user_by_username(care_username)
             if not care or care.role != 'CARE' or not care.connecting_user_code:
                 return {"success": False, "weekly": [], "message": "Care user not found or no connection."}
-            user = self.db.query(User).filter(User.user_code == care.connecting_user_code).first()
+            user = self.db.query(User).filter(User.username == care.connecting_user_code).first()
             if not user:
                 return {"success": False, "weekly": [], "message": "Connected user not found."}
             try:
@@ -89,10 +89,25 @@ class CareService:
             result = []
             for d in sorted(days.keys()):
                 cnt = Counter(days[d])
-                top, val = cnt.most_common(1)[0]
-                # 동률 맞추기(동점시 가장 먼저 업로드한 감정을 top으로)
-                top_emotions = [e for e, c in cnt.items() if c == val]
-                selected = day_first[d] if len(top_emotions) > 1 and day_first[d] in top_emotions else top
+                # Unknown이 아닌 감정이 하나라도 있으면 Unknown 제외
+                non_unknown_cnt = {k: v for k, v in cnt.items() if k and str(k).lower() not in ("unknown", "null", "none")}
+                if non_unknown_cnt:
+                    # Unknown 제외하고 top_emotion 선택
+                    cnt_filtered = Counter(non_unknown_cnt)
+                    top, val = cnt_filtered.most_common(1)[0]
+                    top_emotions = [e for e, c in cnt_filtered.items() if c == val]
+                    # day_first에서도 Unknown 제외된 감정 중 첫 번째 찾기
+                    first_non_unknown = None
+                    for em in days[d]:
+                        if em and str(em).lower() not in ("unknown", "null", "none"):
+                            first_non_unknown = em
+                            break
+                    selected = first_non_unknown if len(top_emotions) > 1 and first_non_unknown in top_emotions else top
+                else:
+                    # 모든 감정이 Unknown인 경우에만 Unknown 반환
+                    top, val = cnt.most_common(1)[0]
+                    top_emotions = [e for e, c in cnt.items() if c == val]
+                    selected = day_first[d] if len(top_emotions) > 1 and day_first[d] in top_emotions else top
                 result.append({
                     "date": d.isoformat(),
                     "weekday": d.strftime("%a"),

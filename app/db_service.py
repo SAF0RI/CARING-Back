@@ -74,6 +74,7 @@ class DatabaseService:
                 joinedload(Voice.questions),
                 joinedload(Voice.voice_content),
                 joinedload(Voice.voice_analyze),
+                joinedload(Voice.voice_composite),
             )
             .first()
         )
@@ -83,10 +84,10 @@ class DatabaseService:
         return self.db.query(Voice).filter(Voice.voice_key == voice_key).first()
     
     def get_voices_by_user(self, user_id: int, skip: int = 0, limit: int = 50) -> List[Voice]:
-        """사용자별 음성 파일 목록 조회 (question 포함)"""
+        """사용자별 음성 파일 목록 조회 (question, voice_composite 포함)"""
         from sqlalchemy.orm import joinedload
         return self.db.query(Voice).filter(Voice.user_id == user_id)\
-            .options(joinedload(Voice.questions))\
+            .options(joinedload(Voice.questions), joinedload(Voice.voice_composite))\
             .order_by(Voice.created_at.desc()).offset(skip).limit(limit).all()
 
     def get_care_voices(self, care_username: str, skip: int = 0, limit: int = 20) -> List[Voice]:
@@ -96,8 +97,8 @@ class DatabaseService:
         care = self.get_user_by_username(care_username)
         if not care or not care.connecting_user_code:
             return []
-        # 2) 연결된 사용자 조회
-        linked_user = self.get_user_by_user_code(care.connecting_user_code)
+        # 2) 연결된 사용자 조회 (username으로 조회)
+        linked_user = self.get_user_by_username(care.connecting_user_code)
         if not linked_user:
             return []
         # 3) 연결 사용자 음성 중 분석 완료만(join) 페이징
@@ -105,7 +106,7 @@ class DatabaseService:
             self.db.query(Voice)
             .join(VoiceAnalyze, VoiceAnalyze.voice_id == Voice.voice_id)
             .filter(Voice.user_id == linked_user.user_id)
-            .options(joinedload(Voice.questions), joinedload(Voice.voice_analyze))
+            .options(joinedload(Voice.questions), joinedload(Voice.voice_analyze), joinedload(Voice.voice_composite))
             .order_by(Voice.created_at.desc())
             .offset(skip)
             .limit(limit)
@@ -285,13 +286,18 @@ class DatabaseService:
         )
 
     def delete_voice_with_relations(self, voice_id: int) -> bool:
-        """연관 데이터(voice_question, voice_content, voice_analyze) 삭제 후 voice 삭제"""
+        """연관 데이터(voice_question, voice_content, voice_analyze, voice_composite, voice_job_process) 삭제 후 voice 삭제"""
+        from .models import VoiceComposite, VoiceJobProcess
         # voice_question
         self.db.query(VoiceQuestion).filter(VoiceQuestion.voice_id == voice_id).delete(synchronize_session=False)
         # voice_content
         self.db.query(VoiceContent).filter(VoiceContent.voice_id == voice_id).delete(synchronize_session=False)
         # voice_analyze
         self.db.query(VoiceAnalyze).filter(VoiceAnalyze.voice_id == voice_id).delete(synchronize_session=False)
+        # voice_composite
+        self.db.query(VoiceComposite).filter(VoiceComposite.voice_id == voice_id).delete(synchronize_session=False)
+        # voice_job_process
+        self.db.query(VoiceJobProcess).filter(VoiceJobProcess.voice_id == voice_id).delete(synchronize_session=False)
         # voice
         deleted = self.db.query(Voice).filter(Voice.voice_id == voice_id).delete(synchronize_session=False)
         self.db.commit()
