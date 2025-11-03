@@ -537,6 +537,9 @@ async def get_care_voice_composite(voice_id: int, care_username: str, db: Sessio
 
     return {
         "voice_id": voice_id,
+        "username": connected_user.username,  # 매칭된 유저의 username
+        "name": connected_user.name,  # 매칭된 유저의 name
+        "created_at": voice.created_at.isoformat() if voice.created_at else None,  # 음성 생성일시
 
         # *_bps fields are hidden per design
         "happy_pct": pct(row.happy_bps),
