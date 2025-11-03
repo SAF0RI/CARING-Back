@@ -3,6 +3,7 @@ from typing import Optional
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form, APIRouter, Depends
 from fastapi.responses import JSONResponse
 from typing import List
+from datetime import datetime
 from .s3_service import upload_fileobj, list_bucket_objects, list_bucket_objects_with_urls
 from .constants import VOICE_BASE_PREFIX, DEFAULT_UPLOAD_FOLDER
 from .emotion_service import analyze_voice_emotion
@@ -25,7 +26,8 @@ from .dto import (
     VoiceAnalyzePreviewResponse,
     UserInfoResponse, CareInfoResponse,
     FcmTokenRegisterRequest, FcmTokenRegisterResponse, FcmTokenDeactivateResponse,
-    NotificationListResponse
+    NotificationListResponse,
+    TopEmotionResponse, CareTopEmotionResponse
 )
 from .care_service import CareService
 import random
@@ -378,6 +380,32 @@ async def get_user_emotion_weekly(username: str, month: str, week: int, db: Sess
         raise HTTPException(status_code=400, detail=result.get("message", "조회 실패"))
     return result
 
+
+@users_router.get("/top_emotion", response_model=TopEmotionResponse)
+async def get_user_top_emotion(username: str, date: str, db: Session = Depends(get_db)):
+    """사용자 본인의 그날의 대표 emotion 조회"""
+    from .services.top_emotion_service import get_top_emotion_for_date
+    
+    # 사용자 검증
+    auth_service = get_auth_service(db)
+    user = auth_service.get_user_by_username(username)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # 날짜 형식 검증
+    try:
+        datetime.strptime(date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    
+    # 그날의 대표 emotion 조회
+    top_emotion = get_top_emotion_for_date(db, user.user_id, date)
+    
+    return TopEmotionResponse(
+        date=date,
+        top_emotion=top_emotion
+    )
+
 @users_router.post("/fcm/register", response_model=FcmTokenRegisterResponse)
 async def register_fcm_token(
     request: FcmTokenRegisterRequest,
@@ -544,6 +572,37 @@ async def get_care_notifications(care_username: str, db: Session = Depends(get_d
     ]
     
     return NotificationListResponse(notifications=notification_items)
+
+
+@care_router.get("/top_emotion", response_model=CareTopEmotionResponse)
+async def get_care_top_emotion(care_username: str, date: str, db: Session = Depends(get_db)):
+    """보호자 페이지: 연결된 유저의 그날의 대표 emotion 조회"""
+    from .services.top_emotion_service import get_top_emotion_for_date
+    
+    # 보호자 검증 및 연결 유저 확인
+    auth_service = get_auth_service(db)
+    care_user = auth_service.get_user_by_username(care_username)
+    if not care_user or care_user.role != 'CARE' or not care_user.connecting_user_code:
+        raise HTTPException(status_code=400, detail="invalid care user or not connected")
+    
+    connected_user = auth_service.get_user_by_username(care_user.connecting_user_code)
+    if not connected_user:
+        raise HTTPException(status_code=400, detail="connected user not found")
+    
+    # 날짜 형식 검증
+    try:
+        datetime.strptime(date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    
+    # 그날의 대표 emotion 조회
+    top_emotion = get_top_emotion_for_date(db, connected_user.user_id, date)
+    
+    return CareTopEmotionResponse(
+        date=date,
+        user_name=connected_user.name,
+        top_emotion=top_emotion
+    )
 
 
 @care_router.get("/voices/{voice_id}/composite")
