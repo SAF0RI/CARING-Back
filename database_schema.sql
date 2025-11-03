@@ -145,4 +145,16 @@ CREATE TABLE IF NOT EXISTS `fcm_token` (
   INDEX `idx_device_token` (`device_id`, `fcm_token`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- NOTIFICATION
+CREATE TABLE IF NOT EXISTS `notification` (
+  `notification_id` BIGINT PRIMARY KEY AUTO_INCREMENT,
+  `voice_id` BIGINT NOT NULL,
+  `name` VARCHAR(50) NOT NULL,
+  `top_emotion` VARCHAR(16) NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT `fk_notification_voice` FOREIGN KEY (`voice_id`) REFERENCES `voice`(`voice_id`) ON DELETE CASCADE,
+  INDEX `idx_notification_voice` (`voice_id`),
+  INDEX `idx_notification_created` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 SET FOREIGN_KEY_CHECKS = 1;

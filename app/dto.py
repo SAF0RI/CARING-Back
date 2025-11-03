@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from datetime import date
 
 
@@ -68,6 +68,35 @@ class FcmTokenDeactivateResponse(BaseModel):
     """FCM 토큰 비활성화 응답"""
     message: str
     deactivated_count: int
+
+
+# Notification 관련 DTO
+class NotificationItem(BaseModel):
+    """알림 항목"""
+    notification_id: int
+    voice_id: int
+    name: str
+    top_emotion: Optional[str] = None
+    created_at: str  # ISO 형식
+
+
+class NotificationListResponse(BaseModel):
+    """알림 목록 응답"""
+    notifications: List[NotificationItem]
+
+
+# Top Emotion 관련 DTO
+class TopEmotionResponse(BaseModel):
+    """그날의 대표 emotion 응답"""
+    date: str  # YYYY-MM-DD
+    top_emotion: Optional[str] = None
+
+
+class CareTopEmotionResponse(BaseModel):
+    """보호자용 그날의 대표 emotion 응답"""
+    date: str  # YYYY-MM-DD
+    user_name: str  # 연결된 유저 이름
+    top_emotion: Optional[str] = None
 
 
 # 음성 관련 DTO

@@ -3,6 +3,7 @@ from typing import Optional
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form, APIRouter, Depends
 from fastapi.responses import JSONResponse
 from typing import List
+from datetime import datetime
 from .s3_service import upload_fileobj, list_bucket_objects, list_bucket_objects_with_urls
 from .constants import VOICE_BASE_PREFIX, DEFAULT_UPLOAD_FOLDER
 from .emotion_service import analyze_voice_emotion
@@ -24,7 +25,9 @@ from .dto import (
     SentimentResponse, EntitiesResponse, SyntaxResponse, ComprehensiveAnalysisResponse,
     VoiceAnalyzePreviewResponse,
     UserInfoResponse, CareInfoResponse,
-    FcmTokenRegisterRequest, FcmTokenRegisterResponse, FcmTokenDeactivateResponse
+    FcmTokenRegisterRequest, FcmTokenRegisterResponse, FcmTokenDeactivateResponse,
+    NotificationListResponse,
+    TopEmotionResponse, CareTopEmotionResponse
 )
 from .care_service import CareService
 import random
@@ -377,6 +380,30 @@ async def get_user_emotion_weekly(username: str, month: str, week: int, db: Sess
         raise HTTPException(status_code=400, detail=result.get("message", "조회 실패"))
     return result
 
+
+@users_router.get("/top_emotion", response_model=TopEmotionResponse)
+async def get_user_top_emotion(username: str, db: Session = Depends(get_db)):
+    """사용자 본인의 그날의 대표 emotion 조회 (서버 현재 날짜 기준)"""
+    from .services.top_emotion_service import get_top_emotion_for_date
+    
+    # 사용자 검증
+    auth_service = get_auth_service(db)
+    user = auth_service.get_user_by_username(username)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # 서버 현재 날짜 사용
+    today = datetime.now().date()
+    date_str = today.strftime("%Y-%m-%d")
+    
+    # 그날의 대표 emotion 조회
+    top_emotion = get_top_emotion_for_date(db, user.user_id, date_str)
+    
+    return TopEmotionResponse(
+        date=date_str,
+        top_emotion=top_emotion
+    )
+
 @users_router.post("/fcm/register", response_model=FcmTokenRegisterResponse)
 async def register_fcm_token(
     request: FcmTokenRegisterRequest,
@@ -481,9 +508,25 @@ async def get_care_info(username: str, db: Session = Depends(get_db)):
     )
 
 @care_router.get("/users/voices", response_model=CareUserVoiceListResponse)
-async def get_care_user_voice_list(care_username: str, skip: int = 0, limit: int = 20, db: Session = Depends(get_db)):
+async def get_care_user_voice_list(
+    care_username: str,
+    date: Optional[str] = None,  # YYYY-MM-DD 형식, Optional
+    db: Session = Depends(get_db)
+):
+    """보호자 페이지: 연결된 사용자의 분석 완료 음성 목록 조회
+    
+    - date: 날짜 필터 (YYYY-MM-DD). 없으면 전체 조회
+    - pagination 제거됨
+    """
+    # 날짜 형식 검증 (있을 경우만)
+    if date:
+        try:
+            datetime.strptime(date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    
     voice_service = get_voice_service(db)
-    result = voice_service.get_care_voice_list(care_username, skip=skip, limit=limit)
+    result = voice_service.get_care_voice_list(care_username, date=date)
     return CareUserVoiceListResponse(success=result["success"], voices=result.get("voices", []))
 
 @care_router.get("/users/voices/analyzing/frequency")
@@ -506,6 +549,73 @@ async def get_emotion_weekly_summary(
     """보호자페이지 - 연결유저 월/주차별 요일 top 감정 통계"""
     care_service = CareService(db)
     return care_service.get_emotion_weekly_summary(care_username, month, week)
+
+@care_router.get("/notifications", response_model=NotificationListResponse)
+async def get_care_notifications(care_username: str, db: Session = Depends(get_db)):
+    """보호자 페이지: 연결된 유저의 알림 목록 조회"""
+    from .models import Notification, Voice, User
+    
+    # 보호자 검증 및 연결 유저 확인
+    auth_service = get_auth_service(db)
+    care_user = auth_service.get_user_by_username(care_username)
+    if not care_user or care_user.role != 'CARE' or not care_user.connecting_user_code:
+        raise HTTPException(status_code=400, detail="invalid care user or not connected")
+    
+    connected_user = auth_service.get_user_by_username(care_user.connecting_user_code)
+    if not connected_user:
+        raise HTTPException(status_code=400, detail="connected user not found")
+    
+    # 연결된 유저의 voice들의 notification 조회
+    notifications = (
+        db.query(Notification)
+        .join(Voice, Notification.voice_id == Voice.voice_id)
+        .filter(Voice.user_id == connected_user.user_id)
+        .order_by(Notification.created_at.desc())
+        .all()
+    )
+    
+    notification_items = [
+        {
+            "notification_id": n.notification_id,
+            "voice_id": n.voice_id,
+            "name": n.name,
+            "top_emotion": n.top_emotion,
+            "created_at": n.created_at.isoformat() if n.created_at else ""
+        }
+        for n in notifications
+    ]
+    
+    return NotificationListResponse(notifications=notification_items)
+
+
+@care_router.get("/top_emotion", response_model=CareTopEmotionResponse)
+async def get_care_top_emotion(care_username: str, db: Session = Depends(get_db)):
+    """보호자 페이지: 연결된 유저의 그날의 대표 emotion 조회 (서버 현재 날짜 기준)"""
+    from .services.top_emotion_service import get_top_emotion_for_date
+    
+    # 보호자 검증 및 연결 유저 확인
+    auth_service = get_auth_service(db)
+    care_user = auth_service.get_user_by_username(care_username)
+    if not care_user or care_user.role != 'CARE' or not care_user.connecting_user_code:
+        raise HTTPException(status_code=400, detail="invalid care user or not connected")
+    
+    connected_user = auth_service.get_user_by_username(care_user.connecting_user_code)
+    if not connected_user:
+        raise HTTPException(status_code=400, detail="connected user not found")
+    
+    # 서버 현재 날짜 사용
+    today = datetime.now().date()
+    date_str = today.strftime("%Y-%m-%d")
+    
+    # 그날의 대표 emotion 조회
+    top_emotion = get_top_emotion_for_date(db, connected_user.user_id, date_str)
+    
+    return CareTopEmotionResponse(
+        date=date_str,
+        user_name=connected_user.name,
+        top_emotion=top_emotion
+    )
+
 
 @care_router.get("/voices/{voice_id}/composite")
 async def get_care_voice_composite(voice_id: int, care_username: str, db: Session = Depends(get_db)):
@@ -537,6 +647,9 @@ async def get_care_voice_composite(voice_id: int, care_username: str, db: Sessio
 
     return {
         "voice_id": voice_id,
+        "username": connected_user.username,  # 매칭된 유저의 username
+        "name": connected_user.name,  # 매칭된 유저의 name
+        "created_at": voice.created_at.isoformat() if voice.created_at else None,  # 음성 생성일시
 
         # *_bps fields are hidden per design
         "happy_pct": pct(row.happy_bps),

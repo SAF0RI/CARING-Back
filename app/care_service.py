@@ -1,5 +1,5 @@
 from sqlalchemy import func, extract
-from .models import User, Voice, VoiceAnalyze
+from .models import User, Voice, VoiceComposite
 from .auth_service import get_auth_service
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
@@ -28,14 +28,15 @@ class CareService:
             except Exception:
                 return {"success": False, "frequency": {}, "message": "month format YYYY-MM required"}
             results = (
-                self.db.query(VoiceAnalyze.top_emotion, func.count())
-                .join(Voice, Voice.voice_id == VoiceAnalyze.voice_id)
+                self.db.query(VoiceComposite.top_emotion, func.count())
+                .join(Voice, Voice.voice_id == VoiceComposite.voice_id)
                 .filter(
                     Voice.user_id == user.user_id,
                     extract('year', Voice.created_at) == y,
-                    extract('month', Voice.created_at) == m
+                    extract('month', Voice.created_at) == m,
+                    VoiceComposite.top_emotion.isnot(None)  # null 제외
                 )
-                .group_by(VoiceAnalyze.top_emotion)
+                .group_by(VoiceComposite.top_emotion)
                 .all()
             )
             freq = {str(emotion): count for emotion, count in results if emotion}
@@ -70,8 +71,8 @@ class CareService:
             end_date = datetime(y, m, end_day, 23, 59, 59)
             # 요일별 group
             q = (
-                self.db.query(Voice, VoiceAnalyze)
-                .join(VoiceAnalyze, Voice.voice_id == VoiceAnalyze.voice_id)
+                self.db.query(Voice, VoiceComposite)
+                .join(VoiceComposite, Voice.voice_id == VoiceComposite.voice_id)
                 .filter(
                     Voice.user_id == user.user_id,
                     Voice.created_at >= start_date,
@@ -80,9 +81,9 @@ class CareService:
             )
             days = defaultdict(list)  # day: [emotion, ...]
             day_first = {}
-            for v, va in q:
+            for v, vc in q:
                 d = v.created_at.date()
-                em = va.top_emotion
+                em = vc.top_emotion if vc else None
                 days[d].append(em)
                 if d not in day_first:
                     day_first[d] = em  # 업로드 빠른 감정 미리 기억

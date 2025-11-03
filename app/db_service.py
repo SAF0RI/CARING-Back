@@ -90,9 +90,15 @@ class DatabaseService:
             .options(joinedload(Voice.questions), joinedload(Voice.voice_composite))\
             .order_by(Voice.created_at.desc()).offset(skip).limit(limit).all()
 
-    def get_care_voices(self, care_username: str, skip: int = 0, limit: int = 20) -> List[Voice]:
-        """보호자(care)의 연결 사용자 음성 중 voice_analyze가 존재하는 항목만 최신순 조회"""
+    def get_care_voices(self, care_username: str, date: Optional[str] = None) -> List[Voice]:
+        """보호자(care)의 연결 사용자 음성 중 voice_analyze가 존재하는 항목만 최신순 조회
+        
+        Args:
+            care_username: 보호자 username
+            date: 날짜 필터 (YYYY-MM-DD, Optional). None이면 전체 조회
+        """
         from sqlalchemy.orm import joinedload
+        from datetime import datetime
         # 1) 보호자 조회
         care = self.get_user_by_username(care_username)
         if not care or not care.connecting_user_code:
@@ -101,15 +107,30 @@ class DatabaseService:
         linked_user = self.get_user_by_username(care.connecting_user_code)
         if not linked_user:
             return []
-        # 3) 연결 사용자 음성 중 분석 완료만(join) 페이징
+        # 3) 연결 사용자 음성 중 분석 완료만(join) 조회
         q = (
             self.db.query(Voice)
             .join(VoiceAnalyze, VoiceAnalyze.voice_id == Voice.voice_id)
             .filter(Voice.user_id == linked_user.user_id)
-            .options(joinedload(Voice.questions), joinedload(Voice.voice_analyze), joinedload(Voice.voice_composite))
+        )
+        
+        # 날짜 필터링 (있으면 해당 날짜만, 없으면 전체)
+        if date:
+            try:
+                target_date = datetime.strptime(date, "%Y-%m-%d").date()
+                start_datetime = datetime.combine(target_date, datetime.min.time())
+                end_datetime = datetime.combine(target_date, datetime.max.time())
+                q = q.filter(
+                    Voice.created_at >= start_datetime,
+                    Voice.created_at <= end_datetime
+                )
+            except ValueError:
+                # 날짜 형식 오류 시 전체 조회
+                pass
+        
+        q = (
+            q.options(joinedload(Voice.questions), joinedload(Voice.voice_analyze), joinedload(Voice.voice_composite))
             .order_by(Voice.created_at.desc())
-            .offset(skip)
-            .limit(limit)
         )
         return q.all()
     
