@@ -835,6 +835,22 @@ async def test_error(statusCode: int):
             detail=f"Invalid statusCode: {statusCode}. Only 400 or 500 are allowed."
         )
 
+
+@test_router.post("/fcm/send")
+async def test_fcm_send(
+    token: Optional[str] = None,
+    title: str = "Test Title",
+    body: str = "Test Body",
+    db: Session = Depends(get_db)
+):
+    """단일 토큰으로 FCM 테스트 전송 (SDK에서 발급받은 토큰 사용)"""
+    if not token:
+        raise HTTPException(status_code=400, detail="token is required")
+    from .services.fcm_service import FcmService
+    svc = FcmService(db)
+    result = svc.send_notification_to_tokens([token], title, body)
+    return {"success": True, "result": result}
+
 # ---------------- router 등록 ----------------
 app.include_router(users_router)
 app.include_router(care_router)
