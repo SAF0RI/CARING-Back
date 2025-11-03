@@ -446,10 +446,15 @@ class VoiceService:
                 "voices": []
             }
 
-    def get_care_voice_list(self, care_username: str, skip: int = 0, limit: int = 20) -> Dict[str, Any]:
-        """보호자 페이지: 연결된 사용자의 분석 완료 음성 목록 조회(페이징)"""
+    def get_care_voice_list(self, care_username: str, date: Optional[str] = None) -> Dict[str, Any]:
+        """보호자 페이지: 연결된 사용자의 분석 완료 음성 목록 조회
+        
+        Args:
+            care_username: 보호자 username
+            date: 날짜 필터 (YYYY-MM-DD, Optional). None이면 전체 조회
+        """
         try:
-            voices = self.db_service.get_care_voices(care_username, skip=skip, limit=limit)
+            voices = self.db_service.get_care_voices(care_username, date=date)
             items = []
             for v in voices:
                 created_at = v.created_at.isoformat() if v.created_at else ""

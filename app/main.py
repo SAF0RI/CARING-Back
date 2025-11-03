@@ -510,9 +510,25 @@ async def get_care_info(username: str, db: Session = Depends(get_db)):
     )
 
 @care_router.get("/users/voices", response_model=CareUserVoiceListResponse)
-async def get_care_user_voice_list(care_username: str, skip: int = 0, limit: int = 20, db: Session = Depends(get_db)):
+async def get_care_user_voice_list(
+    care_username: str,
+    date: Optional[str] = None,  # YYYY-MM-DD 형식, Optional
+    db: Session = Depends(get_db)
+):
+    """보호자 페이지: 연결된 사용자의 분석 완료 음성 목록 조회
+    
+    - date: 날짜 필터 (YYYY-MM-DD). 없으면 전체 조회
+    - pagination 제거됨
+    """
+    # 날짜 형식 검증 (있을 경우만)
+    if date:
+        try:
+            datetime.strptime(date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    
     voice_service = get_voice_service(db)
-    result = voice_service.get_care_voice_list(care_username, skip=skip, limit=limit)
+    result = voice_service.get_care_voice_list(care_username, date=date)
     return CareUserVoiceListResponse(success=result["success"], voices=result.get("voices", []))
 
 @care_router.get("/users/voices/analyzing/frequency")
