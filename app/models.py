@@ -237,3 +237,39 @@ class Notification(Base):
         Index('idx_notification_voice', 'voice_id'),
         Index('idx_notification_created', 'created_at'),
     )
+
+
+class WeeklyResult(Base):
+    """주간 OpenAI 종합분석 캐시"""
+    __tablename__ = "weekly_result"
+
+    weekly_result_id = Column(BigInteger, primary_key=True, autoincrement=True)
+    user_id = Column(BigInteger, ForeignKey("user.user_id", ondelete="CASCADE"), nullable=False)
+    latest_voice_composite_id = Column(BigInteger, ForeignKey("voice_composite.voice_composite_id", ondelete="CASCADE"), nullable=True)
+    message = Column(Text, nullable=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
+    updated_at = Column(DateTime, nullable=False, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+
+    __table_args__ = (
+        Index('idx_weekly_user', 'user_id'),
+        Index('idx_weekly_latest_vc', 'latest_voice_composite_id'),
+        UniqueConstraint('user_id', name='uq_weekly_user'),
+    )
+
+
+class FrequencyResult(Base):
+    """월간 빈도 OpenAI 종합분석 캐시"""
+    __tablename__ = "frequency_result"
+
+    frequency_result_id = Column(BigInteger, primary_key=True, autoincrement=True)
+    user_id = Column(BigInteger, ForeignKey("user.user_id", ondelete="CASCADE"), nullable=False)
+    latest_voice_composite_id = Column(BigInteger, ForeignKey("voice_composite.voice_composite_id", ondelete="CASCADE"), nullable=True)
+    message = Column(Text, nullable=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
+    updated_at = Column(DateTime, nullable=False, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+
+    __table_args__ = (
+        Index('idx_freq_user', 'user_id'),
+        Index('idx_freq_latest_vc', 'latest_voice_composite_id'),
+        UniqueConstraint('user_id', name='uq_freq_user'),
+    )

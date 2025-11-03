@@ -274,6 +274,7 @@ class VoiceService:
         db = SessionLocal()
         try:
             logger.log_step("(비동기 작업) STT 작업 시작", category="async")
+            deadline = time.monotonic() + 20.0
             
             # 1. STT 처리 (스레드 풀에서 실행하여 실제 병렬 처리 가능)
             file_obj_for_stt = BytesIO(file_content)
@@ -286,10 +287,24 @@ class VoiceService:
             
             stt_file = TempUploadFile(file_obj_for_stt, filename)
             # 동기 함수를 스레드에서 실행하여 블로킹 방지 및 병렬 처리 가능
-            stt_result = await asyncio.to_thread(transcribe_voice, stt_file, "ko-KR")
+            # 남은 시간 계산하여 STT에 타임아웃 적용 (전체 stt->nlp 20초 내)
+            remaining = max(0.1, deadline - time.monotonic())
+            stt_coro = asyncio.to_thread(transcribe_voice, stt_file, "ko-KR", remaining)
+            try:
+                stt_result = await asyncio.wait_for(stt_coro, timeout=remaining)
+            except asyncio.TimeoutError:
+                print(f"STT 타임아웃: voice_id={voice_id} after 20s")
+                logger.log_step("stt 타임아웃", category="async")
+                mark_text_done(db, voice_id)
+                try_aggregate(db, voice_id)
+                return
             
             if not stt_result.get("transcript"):
-                print(f"STT 변환 실패: voice_id={voice_id}")
+                # STT 실패 시에도 집계가 진행되도록 텍스트 작업을 완료 처리
+                print(f"STT 변환 실패: voice_id={voice_id} error={stt_result.get('error')}")
+                logger.log_step("stt 추출 실패", category="async")
+                mark_text_done(db, voice_id)
+                try_aggregate(db, voice_id)
                 return
             
             transcript = stt_result["transcript"]
@@ -297,7 +312,21 @@ class VoiceService:
             logger.log_step("stt 추출 완료", category="async")
             
             # 2. NLP 감정 분석 (STT 결과로) - 스레드에서 실행
-            nlp_result = await asyncio.to_thread(analyze_text_sentiment, transcript, "ko")
+            # NLP도 남은 시간 내에서만 수행
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                logger.log_step("nlp 타임아웃", category="async")
+                mark_text_done(db, voice_id)
+                try_aggregate(db, voice_id)
+                return
+            nlp_coro = asyncio.to_thread(analyze_text_sentiment, transcript, "ko")
+            try:
+                nlp_result = await asyncio.wait_for(nlp_coro, timeout=max(0.1, remaining))
+            except asyncio.TimeoutError:
+                logger.log_step("nlp 타임아웃", category="async")
+                mark_text_done(db, voice_id)
+                try_aggregate(db, voice_id)
+                return
             logger.log_step("nlp 작업 완료", category="async")
             
             # 3. VoiceContent 저장 (STT 결과 + NLP 감정 분석 결과)
@@ -331,7 +360,14 @@ class VoiceService:
             
         except Exception as e:
             print(f"STT → NLP 처리 중 오류 발생: {e}")
+            logger.log_step("stt 오류", category="async")
             db.rollback()
+            # 오류 시에도 텍스트 작업을 완료 처리하여 집계가 막히지 않도록 함
+            try:
+                mark_text_done(db, voice_id)
+                try_aggregate(db, voice_id)
+            except Exception:
+                pass
         finally:
             db.close()
 

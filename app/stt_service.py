@@ -35,7 +35,7 @@ class GoogleSTTService:
             print(f"Google STT 클라이언트 초기화 실패: {e}")
             self.client = None
     
-    def transcribe_audio(self, audio_file, language_code: str = "ko-KR") -> Dict[str, Any]:
+    def transcribe_audio(self, audio_file, language_code: str = "ko-KR", timeout_seconds: Optional[float] = None) -> Dict[str, Any]:
         """
         음성 파일을 텍스트로 변환합니다.
         
@@ -101,7 +101,8 @@ class GoogleSTTService:
             )
             
             # STT 요청 실행
-            response = self.client.recognize(config=config, audio=audio)
+            # STT 요청 실행 (타임아웃 적용)
+            response = self.client.recognize(config=config, audio=audio, timeout=timeout_seconds)
             
             # 결과 처리
             if response.results:
@@ -141,6 +142,6 @@ class GoogleSTTService:
 stt_service = GoogleSTTService()
 
 
-def transcribe_voice(audio_file, language_code: str = "ko-KR") -> Dict[str, Any]:
+def transcribe_voice(audio_file, language_code: str = "ko-KR", timeout_seconds: Optional[float] = None) -> Dict[str, Any]:
     """음성을 텍스트로 변환하는 함수"""
-    return stt_service.transcribe_audio(audio_file, language_code)
+    return stt_service.transcribe_audio(audio_file, language_code, timeout_seconds)

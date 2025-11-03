@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from typing import List, Dict, Optional
 from sqlalchemy.orm import Session
-from ..models import Voice, VoiceComposite, User
+from ..models import Voice, VoiceComposite, User, WeeklyResult, FrequencyResult
 
 
 def _get_openai_client():
@@ -80,21 +80,27 @@ def _query_month_emotion_counts(session: Session, user_id: int) -> Dict[str, int
 
 def _build_weekly_prompt(user_name: str, by_day: Dict[str, List[str]]) -> List[Dict[str, str]]:
     """주간 분석 프롬프트 구성"""
-    lines = [f"대상 사용자: {user_name}", "최근 7일 간 날짜별 대표 감정 목록입니다."]
-    for day in sorted(by_day.keys()):
-        vals = ", ".join(by_day[day]) if by_day[day] else "(없음)"
-        lines.append(f"- {day}: {vals}")
+    lines = [f"대상 사용자: {user_name}"]
+    if not by_day:
+        lines.append("최근 7일 동안 감정 분석 데이터가 없습니다.")
+    else:
+        lines.append("최근 7일 간 날짜별 대표 감정 목록입니다.")
+        for day in sorted(by_day.keys()):
+            vals = ", ".join(by_day[day]) if by_day[day] else "(없음)"
+            lines.append(f"- {day}: {vals}")
     system = {
         "role": "system",
         "content": (
-            "너는 노년층 케어 서비스의 감정 코치다. 한국어로 공감적이고 간결하게, 2~3문장으로 "
-            "주간 추세를 요약해라. 과장 없이 관찰 중심으로 서술하고, 조언은 최소화한다."
+            "너는 노년층 케어 서비스의 감정 코치다. 한국어로 공감적이고 간결하게, 1~3문장으로 "
+            "주간 추세를 요약해라. 데이터가 없거나 매우 적은 경우에는 그 사실을 명확히 언급하고, "
+            "추측하지 말고 관찰적인 표현만 사용해라. 과장 없이 관찰 중심으로 서술하고, 조언은 최소화한다."
         ),
     }
     user = {
         "role": "user",
         "content": (
-            "다음 날짜별 감정 목록을 바탕으로 주간 감정 추세 한 문단(2~3문장)으로 요약해줘.\n" + "\n".join(lines)
+            "다음 날짜별 감정 목록을 바탕으로 주간 감정 추세 한 문단(1~3문장)으로 요약해줘. "
+            "데이터가 없으면 '최근 7일 동안 감정 분석 데이터가 없었습니다'처럼 명확히 알려줘.\n" + "\n".join(lines)
         ),
     }
     return [system, user]
@@ -106,15 +112,16 @@ def _build_frequency_prompt(user_name: str, counts: Dict[str, int]) -> List[Dict
     system = {
         "role": "system",
         "content": (
-            "너는 노년층 케어 서비스의 감정 코치다. 한국어로 공감적이고 간결하게, 2~3문장으로 "
-            "월간 감정 빈도 특성을 요약해라. 감정이 일부 확인되면 '일부 확인'처럼 신중한 표현을 사용해라."
+            "너는 노년층 케어 서비스의 감정 코치다. 한국어로 공감적이고 간결하게, 1~3문장으로 "
+            "월간 감정 빈도 특성을 요약해라. 데이터가 없거나 매우 적은 경우에는 그 사실을 명확히 언급하고, "
+            "추측하지 말고 관찰적인 표현만 사용해라. 감정이 일부 확인되면 '일부 확인'처럼 신중한 표현을 사용해라."
         ),
     }
     user = {
         "role": "user",
         "content": (
             f"대상 사용자: {user_name}\n이 달의 대표 감정 빈도수는 다음과 같아: {items}. "
-            "월간 감정 경향을 2~3문장으로 요약해줘."
+            "월간 감정 경향을 1~3문장으로 요약해줘. 데이터가 없으면 '이번 달에는 감정 분석 데이터가 없었습니다'처럼 명확히 알려줘."
         ),
     }
     return [system, user]
@@ -137,9 +144,37 @@ def get_weekly_result(session: Session, username: str, is_care: bool = False) ->
         if not target_user:
             raise ValueError("connected user not found")
 
+    # 최신 voice_composite_id 조회
+    latest_vc = (
+        session.query(VoiceComposite.voice_composite_id)
+        .join(Voice, Voice.voice_id == VoiceComposite.voice_id)
+        .filter(Voice.user_id == target_user.user_id)
+        .order_by(VoiceComposite.created_at.desc())
+        .first()
+    )
+    latest_vc_id = latest_vc[0] if latest_vc else None
+
+    # 캐시 조회
+    cache = session.query(WeeklyResult).filter(WeeklyResult.user_id == target_user.user_id).first()
+    if cache and cache.latest_voice_composite_id == latest_vc_id:
+        return cache.message
+
+    # 생성 후 캐시 저장/갱신
     by_day = _query_weekly_top_emotions(session, target_user.user_id)
     messages = _build_weekly_prompt(target_user.name, by_day)
-    return _call_openai(messages)
+    msg = _call_openai(messages)
+
+    if cache:
+        cache.message = msg
+        cache.latest_voice_composite_id = latest_vc_id
+    else:
+        session.add(WeeklyResult(
+            user_id=target_user.user_id,
+            latest_voice_composite_id=latest_vc_id,
+            message=msg,
+        ))
+    session.commit()
+    return msg
 
 
 def get_frequency_result(session: Session, username: str, is_care: bool = False) -> str:
@@ -158,8 +193,36 @@ def get_frequency_result(session: Session, username: str, is_care: bool = False)
         if not target_user:
             raise ValueError("connected user not found")
 
+    # 최신 voice_composite_id 조회
+    latest_vc = (
+        session.query(VoiceComposite.voice_composite_id)
+        .join(Voice, Voice.voice_id == VoiceComposite.voice_id)
+        .filter(Voice.user_id == target_user.user_id)
+        .order_by(VoiceComposite.created_at.desc())
+        .first()
+    )
+    latest_vc_id = latest_vc[0] if latest_vc else None
+
+    # 캐시 조회
+    cache = session.query(FrequencyResult).filter(FrequencyResult.user_id == target_user.user_id).first()
+    if cache and cache.latest_voice_composite_id == latest_vc_id:
+        return cache.message
+
+    # 생성 후 캐시 저장/갱신
     counts = _query_month_emotion_counts(session, target_user.user_id)
     messages = _build_frequency_prompt(target_user.name, counts)
-    return _call_openai(messages)
+    msg = _call_openai(messages)
+
+    if cache:
+        cache.message = msg
+        cache.latest_voice_composite_id = latest_vc_id
+    else:
+        session.add(FrequencyResult(
+            user_id=target_user.user_id,
+            latest_voice_composite_id=latest_vc_id,
+            message=msg,
+        ))
+    session.commit()
+    return msg
 
 
