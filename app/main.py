@@ -382,8 +382,8 @@ async def get_user_emotion_weekly(username: str, month: str, week: int, db: Sess
 
 
 @users_router.get("/top_emotion", response_model=TopEmotionResponse)
-async def get_user_top_emotion(username: str, date: str, db: Session = Depends(get_db)):
-    """사용자 본인의 그날의 대표 emotion 조회"""
+async def get_user_top_emotion(username: str, db: Session = Depends(get_db)):
+    """사용자 본인의 그날의 대표 emotion 조회 (서버 현재 날짜 기준)"""
     from .services.top_emotion_service import get_top_emotion_for_date
     
     # 사용자 검증
@@ -392,17 +392,15 @@ async def get_user_top_emotion(username: str, date: str, db: Session = Depends(g
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    # 날짜 형식 검증
-    try:
-        datetime.strptime(date, "%Y-%m-%d")
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    # 서버 현재 날짜 사용
+    today = datetime.now().date()
+    date_str = today.strftime("%Y-%m-%d")
     
     # 그날의 대표 emotion 조회
-    top_emotion = get_top_emotion_for_date(db, user.user_id, date)
+    top_emotion = get_top_emotion_for_date(db, user.user_id, date_str)
     
     return TopEmotionResponse(
-        date=date,
+        date=date_str,
         top_emotion=top_emotion
     )
 
@@ -591,8 +589,8 @@ async def get_care_notifications(care_username: str, db: Session = Depends(get_d
 
 
 @care_router.get("/top_emotion", response_model=CareTopEmotionResponse)
-async def get_care_top_emotion(care_username: str, date: str, db: Session = Depends(get_db)):
-    """보호자 페이지: 연결된 유저의 그날의 대표 emotion 조회"""
+async def get_care_top_emotion(care_username: str, db: Session = Depends(get_db)):
+    """보호자 페이지: 연결된 유저의 그날의 대표 emotion 조회 (서버 현재 날짜 기준)"""
     from .services.top_emotion_service import get_top_emotion_for_date
     
     # 보호자 검증 및 연결 유저 확인
@@ -605,17 +603,15 @@ async def get_care_top_emotion(care_username: str, date: str, db: Session = Depe
     if not connected_user:
         raise HTTPException(status_code=400, detail="connected user not found")
     
-    # 날짜 형식 검증
-    try:
-        datetime.strptime(date, "%Y-%m-%d")
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    # 서버 현재 날짜 사용
+    today = datetime.now().date()
+    date_str = today.strftime("%Y-%m-%d")
     
     # 그날의 대표 emotion 조회
-    top_emotion = get_top_emotion_for_date(db, connected_user.user_id, date)
+    top_emotion = get_top_emotion_for_date(db, connected_user.user_id, date_str)
     
     return CareTopEmotionResponse(
-        date=date,
+        date=date_str,
         user_name=connected_user.name,
         top_emotion=top_emotion
     )
