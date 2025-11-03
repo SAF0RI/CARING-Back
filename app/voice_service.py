@@ -6,6 +6,7 @@ from fastapi import UploadFile, HTTPException
 from io import BytesIO
 import asyncio
 import tempfile
+import subprocess
 import librosa
 import soundfile as sf
 import numpy as np
@@ -34,16 +35,78 @@ class VoiceService:
         self.auth_service = get_auth_service(db)
     
     def _convert_to_wav(self, file_content: bytes, original_filename: str) -> Tuple[bytes, str]:
-        """Convert any audio to WAV format (16kHz, mono)"""
+        """
+        Convert any audio to WAV format (16kHz, mono)
+        최적화: ffmpeg 직접 사용 + stdin/stdout 파이프로 임시 파일 제거
+        """
+        ext = original_filename.rsplit('.', 1)[-1].lower() if '.' in original_filename else 'wav'
+        base_name = original_filename.rsplit('.', 1)[0] if '.' in original_filename else original_filename
+        wav_filename = f"{base_name}.wav"
+        
+        # 입력 파일 크기 검증 (최소 크기 확인)
+        if len(file_content) < 100:
+            print(f"[convert] 입력 파일이 너무 작음: {len(file_content)} bytes, librosa로 폴백")
+            # 바로 librosa로 폴백 (아래 코드로 계속 진행)
+        
+        # 방법 1: ffmpeg subprocess 직접 사용 (가장 빠름, stdin/stdout 파이프)
+        if len(file_content) >= 100:  # 충분한 크기일 때만 시도
+            try:
+                ffmpeg_cmd = [
+                    'ffmpeg',
+                    '-i', 'pipe:0',  # stdin에서 입력
+                    '-f', 'wav',      # WAV 형식
+                    '-ar', '16000',   # 16kHz 샘플링 레이트
+                    '-ac', '1',       # 모노 (1채널)
+                    '-acodec', 'pcm_s16le',  # 16-bit PCM
+                    '-loglevel', 'error',  # 에러만 출력
+                    '-y',             # 덮어쓰기
+                    'pipe:1'          # stdout으로 출력
+                ]
+                
+                process = subprocess.run(
+                    ffmpeg_cmd,
+                    input=file_content,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=30,  # 타임아웃 30초
+                    check=False
+                )
+                
+                # 출력 데이터 유효성 검사
+                output_size = len(process.stdout) if process.stdout else 0
+                
+                # WAV 파일은 최소 헤더(44 bytes) + 데이터 필요
+                # 16kHz 모노 기준 0.1초도 약 3.2KB 필요 (16kHz * 2 bytes * 0.1초 = 3.2KB)
+                if process.returncode == 0 and process.stdout and output_size > 3200:
+                    # 추가 검증: WAV 헤더 확인 (RIFF 헤더)
+                    if process.stdout[:4] == b'RIFF' and process.stdout[8:12] == b'WAVE':
+                        print(f"[convert] ffmpeg success: input={len(file_content)} bytes, output={output_size} bytes")
+                        return process.stdout, wav_filename
+                    else:
+                        print(f"[convert] ffmpeg output invalid WAV header, falling back to librosa")
+                else:
+                    # ffmpeg 실패 또는 출력이 너무 작음
+                    stderr_msg = process.stderr.decode('utf-8', errors='ignore')[:500] if process.stderr else "unknown"
+                    print(f"[convert] ffmpeg failed or invalid output (returncode={process.returncode}, input={len(file_content)} bytes, output={output_size} bytes)")
+                    print(f"[convert] stderr: {stderr_msg[:200]}")
+            except (subprocess.TimeoutExpired, FileNotFoundError, Exception) as e:
+                # ffmpeg가 없거나 실패 시 기존 방식으로 폴백
+                print(f"[convert] ffmpeg not available or failed ({type(e).__name__}): {str(e)[:200]}, using librosa fallback")
+        
+        # 방법 2: 기존 librosa 방식 (폴백)
         tmp_input = None
         tmp_output = None
         try:
-            ext = original_filename.rsplit('.', 1)[-1].lower() if '.' in original_filename else 'wav'
             tmp_input = tempfile.NamedTemporaryFile(suffix=f'.{ext}', delete=False)
             tmp_input.write(file_content)
             tmp_input.flush()
 
             audio, sr = librosa.load(tmp_input.name, sr=16000, mono=True)
+            
+            # 오디오 길이 검증 (최소 0.1초 이상)
+            if len(audio) == 0 or len(audio) / sr < 0.1:
+                raise ValueError(f"변환된 오디오가 너무 짧거나 비어있음: {len(audio)} samples, {len(audio)/sr:.3f} seconds")
+            
             audio = np.clip(audio, -1.0, 1.0)
 
             tmp_output = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
@@ -51,10 +114,12 @@ class VoiceService:
 
             with open(tmp_output.name, 'rb') as f:
                 wav_bytes = f.read()
+            
+            # 최종 출력 검증
+            if len(wav_bytes) < 3200:
+                raise ValueError(f"변환된 WAV 파일이 너무 작음: {len(wav_bytes)} bytes")
 
-            base_name = original_filename.rsplit('.', 1)[0] if '.' in original_filename else original_filename
-            wav_filename = f"{base_name}.wav"
-
+            print(f"[convert] librosa success: input={len(file_content)} bytes, output={len(wav_bytes)} bytes, audio_duration={len(audio)/sr:.3f}s")
             return wav_bytes, wav_filename
         finally:
             if tmp_input:
@@ -101,9 +166,12 @@ class VoiceService:
                     "message": "Only .wav and .m4a files are allowed"
                 }
             
-            # 3. 파일 읽기 및 WAV 변환
+            # 3. 파일 읽기 및 WAV 변환 (비동기로 처리하여 블로킹 방지)
             file_content = await file.read()
-            wav_content, wav_filename = self._convert_to_wav(file_content, file.filename)
+            # CPU 집약적 작업을 스레드 풀에서 실행
+            wav_content, wav_filename = await asyncio.to_thread(
+                self._convert_to_wav, file_content, file.filename
+            )
             logger.log_step("파일변환 완료")
             
             # 4. S3 업로드 (WAV 파일)
@@ -562,9 +630,12 @@ class VoiceService:
                     "message": "Only .wav and .m4a files are allowed"
                 }
             
-            # 4. 파일 읽기 및 WAV 변환
+            # 4. 파일 읽기 및 WAV 변환 (비동기로 처리하여 블로킹 방지)
             file_content = await file.read()
-            wav_content, wav_filename = self._convert_to_wav(file_content, file.filename)
+            # CPU 집약적 작업을 스레드 풀에서 실행
+            wav_content, wav_filename = await asyncio.to_thread(
+                self._convert_to_wav, file_content, file.filename
+            )
             logger.log_step("파일변환 완료")
             
             # 5. S3 업로드 (WAV 파일)
