@@ -239,3 +239,10 @@ class ErrorResponse(BaseModel):
 class SuccessResponse(BaseModel):
     message: str
     status: str = "success"
+
+
+# OpenAI 분석 결과 DTO
+class AnalysisResultResponse(BaseModel):
+    """OpenAI 종합분석 결과 응답"""
+    source: str  # weekly | frequency
+    message: str

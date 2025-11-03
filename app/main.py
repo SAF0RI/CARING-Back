@@ -27,7 +27,8 @@ from .dto import (
     UserInfoResponse, CareInfoResponse,
     FcmTokenRegisterRequest, FcmTokenRegisterResponse, FcmTokenDeactivateResponse,
     NotificationListResponse,
-    TopEmotionResponse, CareTopEmotionResponse
+    TopEmotionResponse, CareTopEmotionResponse,
+    AnalysisResultResponse
 )
 from .care_service import CareService
 import random
@@ -381,6 +382,17 @@ async def get_user_emotion_weekly(username: str, month: str, week: int, db: Sess
     return result
 
 
+@users_router.get("/voices/analyzing/weekly/result", response_model=AnalysisResultResponse)
+async def get_user_weekly_result(username: str, month: str, week: int, db: Session = Depends(get_db)):
+    """사용자 본인의 주간 종합분석 결과(OpenAI)"""
+    from .services.analysis_service import get_weekly_result
+    try:
+        message = get_weekly_result(db, username=username, is_care=False)
+        return AnalysisResultResponse(source="weekly", message=message)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"분석 실패: {str(e)}")
+
+
 @users_router.get("/top_emotion", response_model=TopEmotionResponse)
 async def get_user_top_emotion(username: str, db: Session = Depends(get_db)):
     """사용자 본인의 그날의 대표 emotion 조회 (서버 현재 날짜 기준)"""
@@ -539,6 +551,28 @@ async def get_emotion_monthly_frequency(
     care_service = CareService(db)
     return care_service.get_emotion_monthly_frequency(care_username, month)
 
+
+@users_router.get("/voices/analyzing/frequency/result", response_model=AnalysisResultResponse)
+async def get_user_frequency_result(username: str, month: str, db: Session = Depends(get_db)):
+    """사용자 본인의 월간 빈도 종합분석 결과(OpenAI)"""
+    from .services.analysis_service import get_frequency_result
+    try:
+        message = get_frequency_result(db, username=username, is_care=False)
+        return AnalysisResultResponse(source="frequency", message=message)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"분석 실패: {str(e)}")
+
+
+@care_router.get("/users/voices/analyzing/frequency/result", response_model=AnalysisResultResponse)
+async def get_care_frequency_result(care_username: str, month: str, db: Session = Depends(get_db)):
+    """보호자용: 연결된 유저의 월간 빈도 종합분석 결과(OpenAI) (/care/users/voices/analyzing/frequency와 동일 파라미터)"""
+    from .services.analysis_service import get_frequency_result
+    try:
+        message = get_frequency_result(db, username=care_username, is_care=True)
+        return AnalysisResultResponse(source="frequency", message=message)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"분석 실패: {str(e)}")
+
 @care_router.get("/users/voices/analyzing/weekly")
 async def get_emotion_weekly_summary(
     care_username: str,
@@ -549,6 +583,17 @@ async def get_emotion_weekly_summary(
     """보호자페이지 - 연결유저 월/주차별 요일 top 감정 통계"""
     care_service = CareService(db)
     return care_service.get_emotion_weekly_summary(care_username, month, week)
+
+
+@care_router.get("/users/voices/analyzing/weekly/result", response_model=AnalysisResultResponse)
+async def get_care_weekly_result(care_username: str, month: str, week: int, db: Session = Depends(get_db)):
+    """보호자용: 연결된 유저의 주간 종합분석 결과(OpenAI) (/care/users/voices/analyzing/weekly와 동일 파라미터)"""
+    from .services.analysis_service import get_weekly_result
+    try:
+        message = get_weekly_result(db, username=care_username, is_care=True)
+        return AnalysisResultResponse(source="weekly", message=message)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"분석 실패: {str(e)}")
 
 @care_router.get("/notifications", response_model=NotificationListResponse)
 async def get_care_notifications(care_username: str, db: Session = Depends(get_db)):
