@@ -19,7 +19,7 @@ from .auth_service import get_auth_service
 from .repositories.job_repo import ensure_job_row, mark_text_done, mark_audio_done, try_aggregate
 from .performance_logger import get_performance_logger, clear_logger
 from sqlalchemy import func, extract
-from .models import VoiceAnalyze, Voice
+from .models import VoiceAnalyze, Voice, VoiceComposite
 from datetime import datetime
 from calendar import monthrange
 from collections import Counter, defaultdict
@@ -631,14 +631,15 @@ class VoiceService:
             except Exception:
                 return {"success": False, "frequency": {}, "message": "month format YYYY-MM required"}
             results = (
-                self.db.query(VoiceAnalyze.top_emotion, func.count())
-                .join(Voice, Voice.voice_id == VoiceAnalyze.voice_id)
+                self.db.query(VoiceComposite.top_emotion, func.count())
+                .join(Voice, Voice.voice_id == VoiceComposite.voice_id)
                 .filter(
                     Voice.user_id == user.user_id,
                     extract('year', Voice.created_at) == y,
-                    extract('month', Voice.created_at) == m
+                    extract('month', Voice.created_at) == m,
+                    VoiceComposite.top_emotion.isnot(None)  # null 제외
                 )
-                .group_by(VoiceAnalyze.top_emotion)
+                .group_by(VoiceComposite.top_emotion)
                 .all()
             )
             freq = {str(emotion): count for emotion, count in results if emotion}
@@ -661,8 +662,8 @@ class VoiceService:
             start_date = datetime(y, m, start_day)
             end_date = datetime(y, m, end_day, 23, 59, 59)
             q = (
-                self.db.query(Voice, VoiceAnalyze)
-                .join(VoiceAnalyze, Voice.voice_id == VoiceAnalyze.voice_id)
+                self.db.query(Voice, VoiceComposite)
+                .join(VoiceComposite, Voice.voice_id == VoiceComposite.voice_id)
                 .filter(
                     Voice.user_id == user.user_id,
                     Voice.created_at >= start_date,
@@ -671,9 +672,9 @@ class VoiceService:
             )
             days = defaultdict(list)
             day_first = {}
-            for v, va in q:
+            for v, vc in q:
                 d = v.created_at.date()
-                em = va.top_emotion
+                em = vc.top_emotion if vc else None
                 days[d].append(em)
                 if d not in day_first:
                     day_first[d] = em
