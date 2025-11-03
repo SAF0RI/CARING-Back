@@ -48,50 +48,74 @@ class VoiceService:
             print(f"[convert] 입력 파일이 너무 작음: {len(file_content)} bytes, librosa로 폴백")
             # 바로 librosa로 폴백 (아래 코드로 계속 진행)
         
-        # 방법 1: ffmpeg subprocess 직접 사용 (가장 빠름, stdin/stdout 파이프)
+        # 방법 1: ffmpeg 파일 입력 방식 (컨테이너 분석 강화)
         if len(file_content) >= 100:  # 충분한 크기일 때만 시도
+            tmp_in = None
+            tmp_out = None
             try:
+                import shutil, os
+                ffmpeg_bin = os.getenv('FFMPEG_PATH') or shutil.which('ffmpeg') or '/usr/bin/ffmpeg'
+                print(f"[convert] using ffmpeg_bin={ffmpeg_bin}")
+
+                # 입력 임시파일 생성 (TMPDIR=/dev/shm 적용됨)
+                tmp_in = tempfile.NamedTemporaryFile(suffix=f'.{ext}', delete=False)
+                tmp_in.write(file_content)
+                tmp_in.flush()
+                tmp_in_path = tmp_in.name
+                tmp_in.close()
+
+                tmp_out = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+                tmp_out_path = tmp_out.name
+                tmp_out.close()
+
                 ffmpeg_cmd = [
-                    'ffmpeg',
-                    '-i', 'pipe:0',  # stdin에서 입력
-                    '-f', 'wav',      # WAV 형식
-                    '-ar', '16000',   # 16kHz 샘플링 레이트
-                    '-ac', '1',       # 모노 (1채널)
-                    '-acodec', 'pcm_s16le',  # 16-bit PCM
-                    '-loglevel', 'error',  # 에러만 출력
-                    '-y',             # 덮어쓰기
-                    'pipe:1'          # stdout으로 출력
+                    ffmpeg_bin,
+                    '-hide_banner', '-loglevel', 'error',
+                    '-probesize', '5M', '-analyzeduration', '10M',
                 ]
-                
+                # m4a/mp4 류는 포맷 힌트 제공
+                if ext in {'m4a', 'mp4', '3gp', '3g2', 'mov'}:
+                    ffmpeg_cmd += ['-f', 'mp4']
+                ffmpeg_cmd += [
+                    '-i', tmp_in_path,
+                    '-vn', '-sn',
+                    '-acodec', 'pcm_s16le', '-ar', '16000', '-ac', '1',
+                    '-y', tmp_out_path,
+                ]
+
                 process = subprocess.run(
                     ffmpeg_cmd,
-                    input=file_content,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    timeout=30,  # 타임아웃 30초
-                    check=False
+                    timeout=30,
+                    check=False,
                 )
-                
+
                 # 출력 데이터 유효성 검사
-                output_size = len(process.stdout) if process.stdout else 0
-                
-                # WAV 파일은 최소 헤더(44 bytes) + 데이터 필요
-                # 16kHz 모노 기준 0.1초도 약 3.2KB 필요 (16kHz * 2 bytes * 0.1초 = 3.2KB)
-                if process.returncode == 0 and process.stdout and output_size > 3200:
-                    # 추가 검증: WAV 헤더 확인 (RIFF 헤더)
-                    if process.stdout[:4] == b'RIFF' and process.stdout[8:12] == b'WAVE':
-                        print(f"[convert] ffmpeg success: input={len(file_content)} bytes, output={output_size} bytes")
-                        return process.stdout, wav_filename
-                    else:
-                        print(f"[convert] ffmpeg output invalid WAV header, falling back to librosa")
+                wav_bytes = b''
+                try:
+                    with open(tmp_out_path, 'rb') as f:
+                        wav_bytes = f.read()
+                except Exception:
+                    wav_bytes = b''
+
+                output_size = len(wav_bytes)
+                if process.returncode == 0 and output_size > 3200 and wav_bytes[:4] == b'RIFF' and wav_bytes[8:12] == b'WAVE':
+                    print(f"[convert] ffmpeg success: input={len(file_content)} bytes, output={output_size} bytes")
+                    return wav_bytes, wav_filename
                 else:
-                    # ffmpeg 실패 또는 출력이 너무 작음
-                    stderr_msg = process.stderr.decode('utf-8', errors='ignore')[:500] if process.stderr else "unknown"
+                    stderr_msg = process.stderr.decode('utf-8', errors='ignore')[:500] if process.stderr else 'unknown'
                     print(f"[convert] ffmpeg failed or invalid output (returncode={process.returncode}, input={len(file_content)} bytes, output={output_size} bytes)")
                     print(f"[convert] stderr: {stderr_msg[:200]}")
             except (subprocess.TimeoutExpired, FileNotFoundError, Exception) as e:
-                # ffmpeg가 없거나 실패 시 기존 방식으로 폴백
-                print(f"[convert] ffmpeg not available or failed ({type(e).__name__}): {str(e)[:200]}, using librosa fallback")
+                print(f"[convert] ffmpeg not available or failed ({type(e).__name__}): {str(e)[:200]}, using librosa fallback (bin={locals().get('ffmpeg_bin','n/a')})")
+            finally:
+                for p in (tmp_in, tmp_out):
+                    if p and hasattr(p, 'name'):
+                        try:
+                            os.unlink(p.name)
+                        except Exception:
+                            pass
         
         # 방법 2: 기존 librosa 방식 (폴백)
         tmp_input = None
