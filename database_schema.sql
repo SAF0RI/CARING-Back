@@ -157,4 +157,34 @@ CREATE TABLE IF NOT EXISTS `notification` (
   INDEX `idx_notification_created` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- WEEKLY_RESULT (OpenAI 주간 종합분석 캐시)
+CREATE TABLE IF NOT EXISTS `weekly_result` (
+  `weekly_result_id` BIGINT PRIMARY KEY AUTO_INCREMENT,
+  `user_id` BIGINT NOT NULL,
+  `latest_voice_composite_id` BIGINT NULL,
+  `message` TEXT NOT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT `fk_weekly_user` FOREIGN KEY (`user_id`) REFERENCES `user`(`user_id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_weekly_latest_vc` FOREIGN KEY (`latest_voice_composite_id`) REFERENCES `voice_composite`(`voice_composite_id`) ON DELETE CASCADE,
+  UNIQUE KEY `uq_weekly_user` (`user_id`),
+  INDEX `idx_weekly_user` (`user_id`),
+  INDEX `idx_weekly_latest_vc` (`latest_voice_composite_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- FREQUENCY_RESULT (OpenAI 월간 빈도 종합분석 캐시)
+CREATE TABLE IF NOT EXISTS `frequency_result` (
+  `frequency_result_id` BIGINT PRIMARY KEY AUTO_INCREMENT,
+  `user_id` BIGINT NOT NULL,
+  `latest_voice_composite_id` BIGINT NULL,
+  `message` TEXT NOT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT `fk_freq_user` FOREIGN KEY (`user_id`) REFERENCES `user`(`user_id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_freq_latest_vc` FOREIGN KEY (`latest_voice_composite_id`) REFERENCES `voice_composite`(`voice_composite_id`) ON DELETE CASCADE,
+  UNIQUE KEY `uq_freq_user` (`user_id`),
+  INDEX `idx_freq_user` (`user_id`),
+  INDEX `idx_freq_latest_vc` (`latest_voice_composite_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 SET FOREIGN_KEY_CHECKS = 1;

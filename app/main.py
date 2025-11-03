@@ -27,7 +27,8 @@ from .dto import (
     UserInfoResponse, CareInfoResponse,
     FcmTokenRegisterRequest, FcmTokenRegisterResponse, FcmTokenDeactivateResponse,
     NotificationListResponse,
-    TopEmotionResponse, CareTopEmotionResponse
+    TopEmotionResponse, CareTopEmotionResponse,
+    AnalysisResultResponse, WeeklyAnalysisCombinedResponse, FrequencyAnalysisCombinedResponse
 )
 from .care_service import CareService
 import random
@@ -361,24 +362,35 @@ async def upload_voice_with_question(
     else:
         raise HTTPException(status_code=400, detail=result["message"])
 
-@users_router.get("/voices/analyzing/frequency")
+@users_router.get("/voices/analyzing/frequency", response_model=FrequencyAnalysisCombinedResponse)
 async def get_user_emotion_frequency(username: str, month: str, db: Session = Depends(get_db)):
-    """사용자 본인의 한달간 감정 빈도수 집계"""
-    voice_service = get_voice_service(db)
-    result = voice_service.get_user_emotion_monthly_frequency(username, month)
-    if not result.get("success"):
-        raise HTTPException(status_code=400, detail=result.get("message", "조회 실패"))
-    return result
+    """사용자 본인의 월간 빈도 종합분석(OpenAI 캐시 + 기존 빈도 결과)"""
+    from .services.analysis_service import get_frequency_result
+    try:
+        message = get_frequency_result(db, username=username, is_care=False)
+        voice_service = get_voice_service(db)
+        base = voice_service.get_user_emotion_monthly_frequency(username, month)
+        frequency = base.get("frequency", {}) if base.get("success") else {}
+        return FrequencyAnalysisCombinedResponse(message=message, frequency=frequency)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"분석 실패: {str(e)}")
 
-@users_router.get("/voices/analyzing/weekly")
+@users_router.get("/voices/analyzing/weekly", response_model=WeeklyAnalysisCombinedResponse)
 async def get_user_emotion_weekly(username: str, month: str, week: int, db: Session = Depends(get_db)):
-    """사용자 본인의 월/주차별 요일별 top 감정 요약"""
-    voice_service = get_voice_service(db)
-    result = voice_service.get_user_emotion_weekly_summary(username, month, week)
+    """사용자 본인의 주간 종합분석(OpenAI 캐시 사용)"""
+    from .services.analysis_service import get_weekly_result
+    try:
+        message = get_weekly_result(db, username=username, is_care=False)
+        # 기존 주간 요약도 함께 제공
+        voice_service = get_voice_service(db)
+        weekly_result = voice_service.get_user_emotion_weekly_summary(username, month, week)
+        weekly = weekly_result.get("weekly", []) if weekly_result.get("success") else []
+        return WeeklyAnalysisCombinedResponse(message=message, weekly=weekly)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"분석 실패: {str(e)}")
 
-    if not result.get("success"):
-        raise HTTPException(status_code=400, detail=result.get("message", "조회 실패"))
-    return result
+
+ 
 
 
 @users_router.get("/top_emotion", response_model=TopEmotionResponse)
@@ -529,26 +541,49 @@ async def get_care_user_voice_list(
     result = voice_service.get_care_voice_list(care_username, date=date)
     return CareUserVoiceListResponse(success=result["success"], voices=result.get("voices", []))
 
-@care_router.get("/users/voices/analyzing/frequency")
+@care_router.get("/users/voices/analyzing/frequency", response_model=FrequencyAnalysisCombinedResponse)
 async def get_emotion_monthly_frequency(
     care_username: str, month: str, db: Session = Depends(get_db)
 ):
-    """
-    보호자 페이지: 연결된 유저의 한달간 감정 빈도수 집계 (CareService 내부 로직 사용)
-    """
-    care_service = CareService(db)
-    return care_service.get_emotion_monthly_frequency(care_username, month)
+    """보호자: 연결 유저의 월간 빈도 종합분석(OpenAI 캐시 + 기존 빈도 결과)"""
+    from .services.analysis_service import get_frequency_result
+    try:
+        message = get_frequency_result(db, username=care_username, is_care=True)
+        from .care_service import CareService
+        care_service = CareService(db)
+        base = care_service.get_emotion_monthly_frequency(care_username, month)
+        frequency = base.get("frequency", {}) if base.get("success") else {}
+        return FrequencyAnalysisCombinedResponse(message=message, frequency=frequency)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"분석 실패: {str(e)}")
 
-@care_router.get("/users/voices/analyzing/weekly")
+
+ 
+
+
+ 
+
+@care_router.get("/users/voices/analyzing/weekly", response_model=WeeklyAnalysisCombinedResponse)
 async def get_emotion_weekly_summary(
     care_username: str,
     month: str,
     week: int,
     db: Session = Depends(get_db)
 ):
-    """보호자페이지 - 연결유저 월/주차별 요일 top 감정 통계"""
-    care_service = CareService(db)
-    return care_service.get_emotion_weekly_summary(care_username, month, week)
+    """보호자: 연결 유저의 주간 종합분석(OpenAI 캐시 사용)"""
+    from .services.analysis_service import get_weekly_result
+    try:
+        message = get_weekly_result(db, username=care_username, is_care=True)
+        # 기존 주간 요약도 함께 제공
+        care_service = CareService(db)
+        weekly_result = care_service.get_emotion_weekly_summary(care_username, month, week)
+        weekly = weekly_result.get("weekly", []) if weekly_result.get("success") else []
+        return WeeklyAnalysisCombinedResponse(message=message, weekly=weekly)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"분석 실패: {str(e)}")
+
+
+ 
 
 @care_router.get("/notifications", response_model=NotificationListResponse)
 async def get_care_notifications(care_username: str, db: Session = Depends(get_db)):
@@ -799,6 +834,22 @@ async def test_error(statusCode: int):
             status_code=400, 
             detail=f"Invalid statusCode: {statusCode}. Only 400 or 500 are allowed."
         )
+
+
+@test_router.post("/fcm/send")
+async def test_fcm_send(
+    token: Optional[str] = None,
+    title: str = "Test Title",
+    body: str = "Test Body",
+    db: Session = Depends(get_db)
+):
+    """단일 토큰으로 FCM 테스트 전송 (SDK에서 발급받은 토큰 사용)"""
+    if not token:
+        raise HTTPException(status_code=400, detail="token is required")
+    from .services.fcm_service import FcmService
+    svc = FcmService(db)
+    result = svc.send_notification_to_tokens([token], title, body)
+    return {"success": True, "result": result}
 
 # ---------------- router 등록 ----------------
 app.include_router(users_router)

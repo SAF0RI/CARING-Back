@@ -239,3 +239,28 @@ class ErrorResponse(BaseModel):
 class SuccessResponse(BaseModel):
     message: str
     status: str = "success"
+
+
+# OpenAI 분석 결과 DTO
+class AnalysisResultResponse(BaseModel):
+    """OpenAI 종합분석 결과 응답"""
+    source: str  # weekly | frequency
+    message: str
+
+
+class WeeklyDayItem(BaseModel):
+    date: str
+    weekday: str
+    top_emotion: Optional[str] = None
+
+
+class WeeklyAnalysisCombinedResponse(BaseModel):
+    """주간 종합분석: OpenAI 메시지 + 기존 주간 요약"""
+    message: str
+    weekly: List[WeeklyDayItem]
+
+
+class FrequencyAnalysisCombinedResponse(BaseModel):
+    """월간 빈도 종합분석: OpenAI 메시지 + 기존 빈도 결과"""
+    message: str
+    frequency: dict

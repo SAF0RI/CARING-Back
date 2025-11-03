@@ -161,6 +161,16 @@ class FcmService:
                 "total_count": len(fcm_tokens),
                 "error": str(e)
             }
+
+    def send_notification_to_tokens(
+        self,
+        tokens: List[str],
+        title: str,
+        body: str,
+        data: Optional[Dict[str, str]] = None
+    ) -> Dict[str, int]:
+        """원시 토큰 배열로 테스트 전송"""
+        return self._send_multicast(tokens, title, body, data)
     
     def _deactivate_invalid_tokens(self, invalid_tokens: List[str]):
         """만료되거나 유효하지 않은 토큰 비활성화"""
