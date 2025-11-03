@@ -24,7 +24,8 @@ from .dto import (
     SentimentResponse, EntitiesResponse, SyntaxResponse, ComprehensiveAnalysisResponse,
     VoiceAnalyzePreviewResponse,
     UserInfoResponse, CareInfoResponse,
-    FcmTokenRegisterRequest, FcmTokenRegisterResponse, FcmTokenDeactivateResponse
+    FcmTokenRegisterRequest, FcmTokenRegisterResponse, FcmTokenDeactivateResponse,
+    NotificationListResponse
 )
 from .care_service import CareService
 import random
@@ -506,6 +507,44 @@ async def get_emotion_weekly_summary(
     """보호자페이지 - 연결유저 월/주차별 요일 top 감정 통계"""
     care_service = CareService(db)
     return care_service.get_emotion_weekly_summary(care_username, month, week)
+
+@care_router.get("/notifications", response_model=NotificationListResponse)
+async def get_care_notifications(care_username: str, db: Session = Depends(get_db)):
+    """보호자 페이지: 연결된 유저의 알림 목록 조회"""
+    from .models import Notification, Voice, User
+    
+    # 보호자 검증 및 연결 유저 확인
+    auth_service = get_auth_service(db)
+    care_user = auth_service.get_user_by_username(care_username)
+    if not care_user or care_user.role != 'CARE' or not care_user.connecting_user_code:
+        raise HTTPException(status_code=400, detail="invalid care user or not connected")
+    
+    connected_user = auth_service.get_user_by_username(care_user.connecting_user_code)
+    if not connected_user:
+        raise HTTPException(status_code=400, detail="connected user not found")
+    
+    # 연결된 유저의 voice들의 notification 조회
+    notifications = (
+        db.query(Notification)
+        .join(Voice, Notification.voice_id == Voice.voice_id)
+        .filter(Voice.user_id == connected_user.user_id)
+        .order_by(Notification.created_at.desc())
+        .all()
+    )
+    
+    notification_items = [
+        {
+            "notification_id": n.notification_id,
+            "voice_id": n.voice_id,
+            "name": n.name,
+            "top_emotion": n.top_emotion,
+            "created_at": n.created_at.isoformat() if n.created_at else ""
+        }
+        for n in notifications
+    ]
+    
+    return NotificationListResponse(notifications=notification_items)
+
 
 @care_router.get("/voices/{voice_id}/composite")
 async def get_care_voice_composite(voice_id: int, care_username: str, db: Session = Depends(get_db)):

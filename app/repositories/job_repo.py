@@ -7,7 +7,7 @@ from ..services.composite_service import CompositeService
 
 
 def _send_composite_completion_notification(session: Session, voice_id: int):
-    """voice_composite 생성 완료 시 연결된 CARE 사용자에게 알림 발송"""
+    """voice_composite 생성 완료 시 연결된 CARE 사용자에게 알림 발송 및 알림 기록 저장"""
     # 1. voice 조회
     voice = session.query(Voice).filter(Voice.voice_id == voice_id).first()
     if not voice:
@@ -27,7 +27,31 @@ def _send_composite_completion_notification(session: Session, voice_id: int):
     if not care_user:
         return  # 연결된 CARE 사용자가 없으면 알림 발송 안 함
     
-    # 4. FCM 알림 발송
+    # 4. voice_composite에서 top_emotion 조회
+    from ..models import VoiceComposite
+    voice_composite = session.query(VoiceComposite).filter(
+        VoiceComposite.voice_id == voice_id
+    ).first()
+    top_emotion = voice_composite.top_emotion if voice_composite else None
+    
+    # 5. 알림 기록 생성 (DB 저장) - FCM 실패와 무관하게 반드시 저장
+    try:
+        from ..repositories.notification_repo import create_notification
+        notification = create_notification(
+            session=session,
+            voice_id=voice_id,
+            name=user.name,
+            top_emotion=top_emotion
+        )
+        import logging
+        logging.info(f"Notification record created: notification_id={notification.notification_id}, voice_id={voice_id}")
+    except Exception as e:
+        import logging
+        logging.error(f"Failed to create notification record: {str(e)}")
+        # Notification 생성 실패는 전체 프로세스 중단
+        return
+    
+    # 6. FCM 알림 발송 (Notification 저장은 이미 완료되었으므로 실패해도 무시)
     try:
         from ..services.fcm_service import FcmService
         fcm_service = FcmService(session)
@@ -56,9 +80,9 @@ def _send_composite_completion_notification(session: Session, voice_id: int):
         logging.info(f"FCM notification sent to CARE user (user_id={care_user.user_id}, username={care_user.username}): {result}")
     
     except Exception as e:
-        # FCM 서비스 초기화 실패 등은 무시 (로그만 남김)
+        # FCM 전송 실패해도 Notification은 이미 저장되었으므로 로그만 남기고 계속 진행
         import logging
-        logging.warning(f"FCM notification skipped (service not available): {str(e)}")
+        logging.warning(f"FCM notification failed but notification record was saved: {str(e)}")
 
 
 def ensure_job_row(session: Session, voice_id: int) -> VoiceJobProcess:

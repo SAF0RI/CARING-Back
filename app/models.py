@@ -217,3 +217,23 @@ class FcmToken(Base):
         Index('idx_user_active', 'user_id', 'is_active'),
         Index('idx_device_token', 'device_id', 'fcm_token'),
     )
+
+
+class Notification(Base):
+    """알림 기록 테이블"""
+    __tablename__ = "notification"
+    
+    notification_id = Column(BigInteger, primary_key=True, autoincrement=True)
+    voice_id = Column(BigInteger, ForeignKey("voice.voice_id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(50), nullable=False)  # 연결된 유저의 이름
+    top_emotion = Column(String(16), nullable=True)  # 감정
+    created_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
+    
+    # 관계
+    voice = relationship("Voice", backref="notifications")
+    
+    # 인덱스
+    __table_args__ = (
+        Index('idx_notification_voice', 'voice_id'),
+        Index('idx_notification_created', 'created_at'),
+    )

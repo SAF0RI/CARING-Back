@@ -177,6 +177,9 @@ class VoiceService:
     async def _process_stt_and_nlp_background(self, file_content: bytes, filename: str, voice_id: int):
         """STT → NLP 순차 처리 (백그라운드 비동기)"""
         logger = get_performance_logger(voice_id)
+        # 비동기 작업은 독립적인 세션을 생성하여 사용
+        from .database import SessionLocal
+        db = SessionLocal()
         try:
             logger.log_step("(비동기 작업) STT 작업 시작", category="async")
             
@@ -215,7 +218,9 @@ class VoiceService:
                 magnitude = sentiment.get("magnitude", 0)
                 magnitude_x1000 = int(magnitude * 1000)  # 0~?
             
-            self.db_service.create_voice_content(
+            # 새로운 세션을 사용하여 DB 작업 수행
+            db_service = get_db_service(db)
+            db_service.create_voice_content(
                 voice_id=voice_id,
                 content=transcript,
                 score_bps=score_bps,
@@ -227,17 +232,23 @@ class VoiceService:
             logger.log_step("데이터베이스 입력 완료 (STT/NLP)", category="async")
             
             # mark text done and try aggregate
-            mark_text_done(self.db, voice_id)
-            try_aggregate(self.db, voice_id)
+            mark_text_done(db, voice_id)
+            try_aggregate(db, voice_id)
             
             print(f"STT → NLP 처리 완료: voice_id={voice_id}")
             
         except Exception as e:
             print(f"STT → NLP 처리 중 오류 발생: {e}")
+            db.rollback()
+        finally:
+            db.close()
 
     async def _process_audio_emotion_background(self, file_content: bytes, filename: str, voice_id: int):
         """음성 파일 자체의 감정 분석을 백그라운드에서 수행하여 voice_analyze 저장"""
         logger = get_performance_logger(voice_id)
+        # 비동기 작업은 독립적인 세션을 생성하여 사용
+        from .database import SessionLocal
+        db = SessionLocal()
         try:
             logger.log_step("(비동기 작업) 모델 작업 시작", category="async")
             file_obj = BytesIO(file_content)
@@ -337,7 +348,9 @@ class VoiceService:
             except Exception:
                 pass
 
-            self.db_service.create_voice_analyze(
+            # 새로운 세션을 사용하여 DB 작업 수행
+            db_service = get_db_service(db)
+            db_service.create_voice_analyze(
                 voice_id=voice_id,
                 happy_bps=happy,
                 sad_bps=sad,
@@ -353,12 +366,14 @@ class VoiceService:
             logger.log_step("데이터베이스 입력 완료 (모델)", category="async")
             
             # mark audio done and try aggregate
-            mark_audio_done(self.db, voice_id)
-            try_aggregate(self.db, voice_id)
-
+            mark_audio_done(db, voice_id)
+            try_aggregate(db, voice_id)
             print(f"[voice_analyze] saved voice_id={voice_id} top={top_emotion} conf_bps={top_conf_bps}", flush=True)
         except Exception as e:
             print(f"Audio emotion background error: {e}", flush=True)
+            db.rollback()
+        finally:
+            db.close()
     
     def get_user_voice_list(self, username: str) -> Dict[str, Any]:
         """
