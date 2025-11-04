@@ -299,9 +299,20 @@ async def sign_out(username: str, db: Session = Depends(get_db)):
     }
 
 # ============== users 영역 (음성 업로드/조회/삭제 등) =============
+def _verify_user_role(username: str, db: Session):
+    """username이 USER 역할인지 검증"""
+    auth_service = get_auth_service(db)
+    user = auth_service.get_user_by_username(username)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.role != 'USER':
+        raise HTTPException(status_code=403, detail="Only USER role can access this endpoint")
+    return user
+
 @users_router.get("", response_model=UserInfoResponse)
 async def get_user_info(username: str, db: Session = Depends(get_db)):
     """일반 유저 내정보 조회 (이름, username, 연결된 보호자 이름)"""
+    _verify_user_role(username, db)
     auth_service = get_auth_service(db)
     result = auth_service.get_user_info(username)
     if not result.get("success"):
@@ -314,12 +325,14 @@ async def get_user_info(username: str, db: Session = Depends(get_db)):
 
 @users_router.get("/voices", response_model=UserVoiceListResponse)
 async def get_user_voice_list(username: str, db: Session = Depends(get_db)):
+    _verify_user_role(username, db)
     voice_service = get_voice_service(db)
     result = voice_service.get_user_voice_list(username)
     return UserVoiceListResponse(success=result["success"], voices=result.get("voices", []))
 
 @users_router.get("/voices/{voice_id}", response_model=UserVoiceDetailResponse)
 async def get_user_voice_detail(voice_id: int, username: str, db: Session = Depends(get_db)):
+    _verify_user_role(username, db)
     voice_service = get_voice_service(db)
     result = voice_service.get_user_voice_detail(voice_id, username)
     if not result.get("success"):
@@ -335,6 +348,7 @@ async def get_user_voice_detail(voice_id: int, username: str, db: Session = Depe
 
 @users_router.delete("/voices/{voice_id}")
 async def delete_user_voice(voice_id: int, username: str, db: Session = Depends(get_db)):
+    _verify_user_role(username, db)
     voice_service = get_voice_service(db)
     result = voice_service.delete_user_voice(voice_id, username)
     if result.get("success"):
@@ -348,9 +362,10 @@ async def upload_voice_with_question(
     username: str = None,
     db: Session = Depends(get_db)
 ):
-    voice_service = get_voice_service(db)
     if not username:
         raise HTTPException(status_code=400, detail="username is required as query parameter")
+    _verify_user_role(username, db)
+    voice_service = get_voice_service(db)
     result = await voice_service.upload_voice_with_question(file, username, question_id)
     if result["success"]:
         return VoiceQuestionUploadResponse(
@@ -365,9 +380,10 @@ async def upload_voice_with_question(
 @users_router.get("/voices/analyzing/frequency", response_model=FrequencyAnalysisCombinedResponse)
 async def get_user_emotion_frequency(username: str, month: str, db: Session = Depends(get_db)):
     """사용자 본인의 월간 빈도 종합분석(OpenAI 캐시 + 기존 빈도 결과)"""
+    _verify_user_role(username, db)
     from .services.analysis_service import get_frequency_result
     try:
-        message = get_frequency_result(db, username=username, is_care=False)
+        message = get_frequency_result(db, username=username, month=month, is_care=False)
         voice_service = get_voice_service(db)
         base = voice_service.get_user_emotion_monthly_frequency(username, month)
         frequency = base.get("frequency", {}) if base.get("success") else {}
@@ -378,9 +394,10 @@ async def get_user_emotion_frequency(username: str, month: str, db: Session = De
 @users_router.get("/voices/analyzing/weekly", response_model=WeeklyAnalysisCombinedResponse)
 async def get_user_emotion_weekly(username: str, month: str, week: int, db: Session = Depends(get_db)):
     """사용자 본인의 주간 종합분석(OpenAI 캐시 사용)"""
+    _verify_user_role(username, db)
     from .services.analysis_service import get_weekly_result
     try:
-        message = get_weekly_result(db, username=username, is_care=False)
+        message = get_weekly_result(db, username=username, month=month, week=week, is_care=False)
         # 기존 주간 요약도 함께 제공
         voice_service = get_voice_service(db)
         weekly_result = voice_service.get_user_emotion_weekly_summary(username, month, week)
@@ -398,11 +415,8 @@ async def get_user_top_emotion(username: str, db: Session = Depends(get_db)):
     """사용자 본인의 그날의 대표 emotion 조회 (서버 현재 날짜 기준)"""
     from .services.top_emotion_service import get_top_emotion_for_date
     
-    # 사용자 검증
-    auth_service = get_auth_service(db)
-    user = auth_service.get_user_by_username(username)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    # 사용자 검증 (USER 역할만 허용)
+    user = _verify_user_role(username, db)
     
     # 서버 현재 날짜 사용
     today = datetime.now().date()
@@ -424,12 +438,8 @@ async def register_fcm_token(
 ):
     """FCM 토큰 등록 (로그인 후 호출)"""
     
-    # 사용자 조회
-    auth_service = get_auth_service(db)
-    user = auth_service.get_user_by_username(username)
-    
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    # 사용자 검증 (USER 역할만 허용)
+    user = _verify_user_role(username, db)
     
     # FCM 토큰 등록
     from .repositories.fcm_repo import register_fcm_token
@@ -459,12 +469,8 @@ async def deactivate_fcm_token(
 ):
     """FCM 토큰 비활성화 (특정 기기 또는 전체)"""
     
-    # 사용자 조회
-    auth_service = get_auth_service(db)
-    user = auth_service.get_user_by_username(username)
-    
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    # 사용자 검증 (USER 역할만 허용)
+    user = _verify_user_role(username, db)
     
     from .repositories.fcm_repo import deactivate_fcm_tokens_by_user, deactivate_fcm_token_by_device
     
@@ -548,7 +554,7 @@ async def get_emotion_monthly_frequency(
     """보호자: 연결 유저의 월간 빈도 종합분석(OpenAI 캐시 + 기존 빈도 결과)"""
     from .services.analysis_service import get_frequency_result
     try:
-        message = get_frequency_result(db, username=care_username, is_care=True)
+        message = get_frequency_result(db, username=care_username, month=month, is_care=True)
         from .care_service import CareService
         care_service = CareService(db)
         base = care_service.get_emotion_monthly_frequency(care_username, month)
@@ -573,7 +579,7 @@ async def get_emotion_weekly_summary(
     """보호자: 연결 유저의 주간 종합분석(OpenAI 캐시 사용)"""
     from .services.analysis_service import get_weekly_result
     try:
-        message = get_weekly_result(db, username=care_username, is_care=True)
+        message = get_weekly_result(db, username=care_username, month=month, week=week, is_care=True)
         # 기존 주간 요약도 함께 제공
         care_service = CareService(db)
         weekly_result = care_service.get_emotion_weekly_summary(care_username, month, week)
