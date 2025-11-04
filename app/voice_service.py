@@ -335,7 +335,9 @@ class VoiceService:
             
             if "sentiment" in nlp_result and nlp_result["sentiment"]:
                 sentiment = nlp_result["sentiment"]
-                score_bps = int(sentiment.get("score", 0) * 10000)  # -10000~10000
+                # 스코어 스케일 복구: score∈[-1,1] → score_bps∈[0,10000]
+                score = max(-1.0, min(1.0, float(sentiment.get("score", 0))))
+                score_bps = int((score + 1.0) / 2.0 * 10000)  # 0~10000
                 magnitude = sentiment.get("magnitude", 0)
                 magnitude_x1000 = int(magnitude * 1000)  # 0~?
             
@@ -422,7 +424,8 @@ class VoiceService:
             sad = to_bps(probs.get("sad", probs.get("sadness", 0)))
             neutral = to_bps(probs.get("neutral", 0))
             angry = to_bps(probs.get("angry", probs.get("anger", 0)))
-            fear = to_bps(probs.get("fear", probs.get("fearful", 0)))
+            # 'anxiety'를 fear 채널로 매핑 (모델이 불안을 anxiety로 반환함)
+            fear = to_bps(probs.get("fear", probs.get("fearful", probs.get("anxiety", 0))))
             surprise = to_bps(probs.get("surprise", probs.get("surprised", 0)))
 
             # 모델 응답 키 보정: emotion_service는 기본적으로 "emotion"을 반환
