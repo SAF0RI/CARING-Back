@@ -21,6 +21,9 @@ async def get_voice_composite(voice_id: int, db: Session = Depends(get_db)):
     row: VoiceComposite = db.query(VoiceComposite).filter(VoiceComposite.voice_id == voice_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="not found")
+    # top_emotion에서 fear -> anxiety 변환
+    top_emotion = "anxiety" if row.top_emotion == "fear" else row.top_emotion
+    
     return {
         "voice_id": voice_id,
         "valence_x1000": row.valence_x1000,
@@ -32,8 +35,8 @@ async def get_voice_composite(voice_id: int, db: Session = Depends(get_db)):
         "sad_bps": row.sad_bps,
         "neutral_bps": row.neutral_bps,
         "angry_bps": row.angry_bps,
-        "fear_bps": row.fear_bps,
+        "anxiety_bps": row.fear_bps,  # fear -> anxiety (출력용)
         "surprise_bps": row.surprise_bps,
-        "top_emotion": row.top_emotion,
+        "top_emotion": top_emotion,
         "top_emotion_confidence_bps": row.top_emotion_confidence_bps or 0,
     }

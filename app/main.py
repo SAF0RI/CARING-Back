@@ -424,6 +424,9 @@ async def get_user_top_emotion(username: str, db: Session = Depends(get_db)):
     
     # 그날의 대표 emotion 조회
     top_emotion = get_top_emotion_for_date(db, user.user_id, date_str)
+    # fear -> anxiety 변환 (출력용)
+    if top_emotion == "fear":
+        top_emotion = "anxiety"
     
     return TopEmotionResponse(
         date=date_str,
@@ -620,7 +623,7 @@ async def get_care_notifications(care_username: str, db: Session = Depends(get_d
             "notification_id": n.notification_id,
             "voice_id": n.voice_id,
             "name": n.name,
-            "top_emotion": n.top_emotion,
+            "top_emotion": "anxiety" if n.top_emotion == "fear" else n.top_emotion,  # fear -> anxiety (출력용)
             "created_at": n.created_at.isoformat() if n.created_at else ""
         }
         for n in notifications
@@ -650,6 +653,9 @@ async def get_care_top_emotion(care_username: str, db: Session = Depends(get_db)
     
     # 그날의 대표 emotion 조회
     top_emotion = get_top_emotion_for_date(db, connected_user.user_id, date_str)
+    # fear -> anxiety 변환 (출력용)
+    if top_emotion == "fear":
+        top_emotion = "anxiety"
     
     return CareTopEmotionResponse(
         date=date_str,
@@ -697,9 +703,9 @@ async def get_care_voice_composite(voice_id: int, care_username: str, db: Sessio
         "sad_pct": pct(row.sad_bps),
         "neutral_pct": pct(row.neutral_bps),
         "angry_pct": pct(row.angry_bps),
-        "fear_pct": pct(row.fear_bps),
+        "anxiety_pct": pct(row.fear_bps),  # fear -> anxiety (출력용)
         "surprise_pct": pct(row.surprise_bps),
-        "top_emotion": row.top_emotion,
+        "top_emotion": "anxiety" if row.top_emotion == "fear" else row.top_emotion,  # fear -> anxiety
         "top_emotion_confidence_pct": pct(row.top_emotion_confidence_bps or 0),
     }
 
@@ -780,13 +786,17 @@ async def test_emotion_analyze(file: UploadFile = File(...)):
             )
         top_emotion = result.get("top_emotion") or result.get("label") or result.get("emotion")
         top_conf_bps = to_bps(result.get("top_confidence") or result.get("confidence", 0))
+        # top_emotion에서 fear -> anxiety 변환
+        if top_emotion == "fear":
+            top_emotion = "anxiety"
+        
         return VoiceAnalyzePreviewResponse(
             voice_id=None,
             happy_bps=happy,
             sad_bps=sad,
             neutral_bps=neutral,
             angry_bps=angry,
-            fear_bps=fear,
+            anxiety_bps=fear,  # fear -> anxiety (출력용)
             surprise_bps=surprise,
             top_emotion=top_emotion,
             top_confidence_bps=top_conf_bps,

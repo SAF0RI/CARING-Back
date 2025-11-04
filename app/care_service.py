@@ -39,7 +39,12 @@ class CareService:
                 .group_by(VoiceComposite.top_emotion)
                 .all()
             )
-            freq = {str(emotion): count for emotion, count in results if emotion}
+            # fear -> anxiety 변환 (출력용)
+            freq = {}
+            for emotion, count in results:
+                if emotion:
+                    key = "anxiety" if str(emotion) == "fear" else str(emotion)
+                    freq[key] = count
             return {"success": True, "frequency": freq}
         except Exception as e:
             return {"success": False, "frequency": {}, "message": f"error: {str(e)}"}
@@ -109,10 +114,12 @@ class CareService:
                     top, val = cnt.most_common(1)[0]
                     top_emotions = [e for e, c in cnt.items() if c == val]
                     selected = day_first[d] if len(top_emotions) > 1 and day_first[d] in top_emotions else top
+                # fear -> anxiety 변환 (출력용)
+                top_emotion_display = "anxiety" if selected and str(selected) == "fear" else selected
                 result.append({
                     "date": d.isoformat(),
                     "weekday": d.strftime("%a"),
-                    "top_emotion": selected
+                    "top_emotion": top_emotion_display
                 })
             return {"success": True, "weekly": result}
         except Exception as e:
