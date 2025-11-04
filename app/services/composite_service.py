@@ -15,6 +15,10 @@ class CompositeService:
         text_score, text_mag = get_text_sentiment_by_voice_id(self.db, voice_id)
         res = fuse_VA(audio_probs, text_score, text_mag)
         row = upsert_voice_composite(self.db, voice_id, res)
+        
+        # top_emotion에서 fear -> anxiety 변환 (출력용)
+        top_emotion = "anxiety" if row.top_emotion == "fear" else row.top_emotion
+        
         return {
             "voice_id": voice_id,
             "updated": True,
@@ -27,8 +31,8 @@ class CompositeService:
             "sad_bps": row.sad_bps,
             "neutral_bps": row.neutral_bps,
             "angry_bps": row.angry_bps,
-            "fear_bps": row.fear_bps,
+            "anxiety_bps": row.fear_bps,  # fear -> anxiety (출력용)
             "surprise_bps": row.surprise_bps,
-            "top_emotion": row.top_emotion,
+            "top_emotion": top_emotion,
             "top_emotion_confidence_bps": row.top_emotion_confidence_bps or 0,
         }

@@ -50,23 +50,25 @@ def audio_probs_to_VA(audio_probs: Dict[str, float]) -> Tuple[float, float]:
 
 def adaptive_weights_for_valence(audio_probs: Dict[str, float], score: float, a_text: float) -> float:
     """Compute alpha (text vs audio weight) for Valence.
-    alpha = conf_audio_V / (conf_audio_V + conf_text_V + 1e-8)
+    alpha = conf_audio_V / (conf_audio_V + conf_text_V + eps)
     where conf_text_V = |score|*A_text, conf_audio_V = max(p_e)
     """
+    eps = 1e-6
     conf_text_v = abs(score) * max(0.0, min(1.0, a_text))
     conf_audio_v = max([0.0] + [float(p) for p in audio_probs.values()])
-    denom = conf_audio_v + conf_text_v + 1e-8
+    denom = conf_audio_v + conf_text_v + eps
     return 0.0 if denom == 0 else max(0.0, min(1.0, conf_audio_v / denom))
 
 
 def adaptive_weights_for_arousal(audio_probs: Dict[str, float], a_audio: float, a_text: float) -> float:
     """Compute beta for Arousal.
-    beta = conf_audio_A / (conf_audio_A + conf_text_A + 1e-8)
+    beta = conf_audio_A / (conf_audio_A + conf_text_A + eps)
     where conf_text_A = A_text, conf_audio_A = |A_audio|
     """
+    eps = 1e-6
     conf_text_a = max(0.0, min(1.0, a_text))
     conf_audio_a = abs(a_audio)
-    denom = conf_audio_a + conf_text_a + 1e-8
+    denom = conf_audio_a + conf_text_a + eps
     return 0.0 if denom == 0 else max(0.0, min(1.0, conf_audio_a / denom))
 
 
@@ -78,6 +80,23 @@ def _cosine_similarity(x: Tuple[float, float], y: Tuple[float, float]) -> float:
     den = (sqrt(vx * vx + vy * vy) * sqrt(ax * ax + ay * ay)) or 1e-8
     sim = num / den
     return max(0.0, sim)
+
+
+def _rbf_similarity(x: Tuple[float, float], y: Tuple[float, float], sigma: float = 0.75) -> float:
+    """RBF kernel similarity between two 2D vectors (distance-based).
+    
+    Args:
+        x: (V, A) tuple
+        y: (V, A) tuple
+        sigma: RBF kernel bandwidth (0.6~0.9 권장)
+    
+    Returns:
+        Similarity score in [0, 1]
+    """
+    vx, ax = x
+    vy, ay = y
+    dist_sq = (vx - vy) ** 2 + (ax - ay) ** 2
+    return exp(-(dist_sq) / (2 * sigma * sigma))
 
 
 def _normalize_to_bps(scores: Dict[str, float]) -> Dict[str, int]:
@@ -162,8 +181,8 @@ def apply_zero_prob_mask(
     audio_probs: Dict[str, float],
     *,
     threshold: float = 0.0,   # p ≤ threshold면 마스킹 (0.0이면 p==0만)
-    mode: str = "hard",       # "hard": sims[e]=0, "soft": sims[e]*factor
-    factor: float = 0.2
+    mode: str = "soft",       # "hard": sims[e]=0, "soft": sims[e]*factor
+    factor: float = 0.25      # 소프트 마스킹: 0으로 죽이지 말고 25%만 남김
 ) -> Dict[str, float]:
     out = dict(sims)
     for e, p in audio_probs.items():
@@ -175,6 +194,7 @@ def apply_zero_prob_mask(
             if mode == "hard":
                 out[e] = 0.0
             else:
+                # 소프트 마스킹: 0으로 죽이지 말고 factor만큼만 남김
                 out[e] = max(0.0, out[e] * max(0.0, min(1.0, factor)))
     return out
 
@@ -202,24 +222,36 @@ def fuse_VA(audio_probs: Dict[str, float], text_score: float, text_magnitude: fl
     a_final = beta * a_audio + (1.0 - beta) * a_text
     intensity = sqrt(v_final * v_final + a_final * a_final)
 
-    # Cosine similarities to anchors (negative clipped to 0), normalize to bps
+    # Similarities to anchors (RBF or cosine)
+    # RBF 커널 사용 (옵션): sigma=0.75 (0.6~0.9 권장 그리드 탐색)
+    use_rbf = True  # True: RBF, False: cosine
+    sigma = 0.75
+    
     sims: Dict[str, float] = {}
     for emo, (v_e, a_e) in EMOTION_VA.items():
-        sims[emo] = _cosine_similarity((v_final, a_final), (v_e, a_e))
+        if use_rbf:
+            sims[emo] = _rbf_similarity((v_final, a_final), (v_e, a_e), sigma=sigma)
+        else:
+            sims[emo] = _cosine_similarity((v_final, a_final), (v_e, a_e))
     
-    # zero probability masking: audio_probs에서 0인 감정은 sims에서도 0으로 마스킹
-    sims = apply_zero_prob_mask(sims, audio_probs, threshold=0.0, mode="hard")
+    # 소프트 마스킹: audio_probs에서 0인 감정은 sims에서 25%만 남김
+    sims = apply_zero_prob_mask(sims, audio_probs, threshold=0.0, mode="soft", factor=0.25)
     
     # 모두 0이면 neutral만 1.0로 설정해 정규화 가능하게
     if sum(sims.values()) <= 1e-12:
         sims = {k: (1.0 if k == "neutral" else 0.0) for k in sims.keys()}
     
-    # surprise down-weighting before normalization
-    sims["surprise"] = sims.get("surprise", 0.0) * 0.3
+    # surprise 다운웨이트: 상황부 가중치 적용
+    # V_final > 0 and A_final > 0.6: *0.9, else *1.0
+    if v_final > 0 and a_final > 0.6:
+        surprise_weight = 0.9
+    else:
+        surprise_weight = 1.0
+    sims["surprise"] = sims.get("surprise", 0.0) * surprise_weight
     per_emotion_bps = _normalize_to_bps(sims)
 
-    # optional cap after normalization (e.g., surprise <= 10%)
-    cap = 1000  # adjust if needed
+    # surprise 상한 완화: 10% → 20%로 상향
+    cap = 2000  # 20% (2000 bps)
     sur = per_emotion_bps.get("surprise", 0)
     if sur > cap:
         over = sur - cap

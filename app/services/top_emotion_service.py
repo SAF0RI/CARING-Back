@@ -77,6 +77,10 @@ def get_top_emotion_for_date(session: Session, user_id: int, date_str: str) -> O
             top_emotions = [e for e, c in cnt.items() if c == val]
             selected = first_emotion if len(top_emotions) > 1 and first_emotion in top_emotions else top
         
+        # fear -> anxiety 변환 (출력용)
+        if selected and str(selected) == "fear":
+            selected = "anxiety"
+        
         return selected
         
     except ValueError:

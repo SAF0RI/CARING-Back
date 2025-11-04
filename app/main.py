@@ -424,6 +424,9 @@ async def get_user_top_emotion(username: str, db: Session = Depends(get_db)):
     
     # 그날의 대표 emotion 조회
     top_emotion = get_top_emotion_for_date(db, user.user_id, date_str)
+    # fear -> anxiety 변환 (출력용)
+    if top_emotion == "fear":
+        top_emotion = "anxiety"
     
     return TopEmotionResponse(
         date=date_str,
@@ -620,7 +623,7 @@ async def get_care_notifications(care_username: str, db: Session = Depends(get_d
             "notification_id": n.notification_id,
             "voice_id": n.voice_id,
             "name": n.name,
-            "top_emotion": n.top_emotion,
+            "top_emotion": "anxiety" if n.top_emotion == "fear" else n.top_emotion,  # fear -> anxiety (출력용)
             "created_at": n.created_at.isoformat() if n.created_at else ""
         }
         for n in notifications
@@ -650,6 +653,9 @@ async def get_care_top_emotion(care_username: str, db: Session = Depends(get_db)
     
     # 그날의 대표 emotion 조회
     top_emotion = get_top_emotion_for_date(db, connected_user.user_id, date_str)
+    # fear -> anxiety 변환 (출력용)
+    if top_emotion == "fear":
+        top_emotion = "anxiety"
     
     return CareTopEmotionResponse(
         date=date_str,
@@ -697,9 +703,9 @@ async def get_care_voice_composite(voice_id: int, care_username: str, db: Sessio
         "sad_pct": pct(row.sad_bps),
         "neutral_pct": pct(row.neutral_bps),
         "angry_pct": pct(row.angry_bps),
-        "fear_pct": pct(row.fear_bps),
+        "anxiety_pct": pct(row.fear_bps),  # fear -> anxiety (출력용)
         "surprise_pct": pct(row.surprise_bps),
-        "top_emotion": row.top_emotion,
+        "top_emotion": "anxiety" if row.top_emotion == "fear" else row.top_emotion,  # fear -> anxiety
         "top_emotion_confidence_pct": pct(row.top_emotion_confidence_bps or 0),
     }
 
@@ -780,13 +786,17 @@ async def test_emotion_analyze(file: UploadFile = File(...)):
             )
         top_emotion = result.get("top_emotion") or result.get("label") or result.get("emotion")
         top_conf_bps = to_bps(result.get("top_confidence") or result.get("confidence", 0))
+        # top_emotion에서 fear -> anxiety 변환
+        if top_emotion == "fear":
+            top_emotion = "anxiety"
+        
         return VoiceAnalyzePreviewResponse(
             voice_id=None,
             happy_bps=happy,
             sad_bps=sad,
             neutral_bps=neutral,
             angry_bps=angry,
-            fear_bps=fear,
+            anxiety_bps=fear,  # fear -> anxiety (출력용)
             surprise_bps=surprise,
             top_emotion=top_emotion,
             top_confidence_bps=top_conf_bps,
@@ -856,6 +866,131 @@ async def test_fcm_send(
     svc = FcmService(db)
     result = svc.send_notification_to_tokens([token], title, body)
     return {"success": True, "result": result}
+
+
+@test_router.get("/voice/{voice_id}/fusion")
+async def test_emotion_fusion(voice_id: int, db: Session = Depends(get_db)):
+    """테스트: 새로운 감정 융합 알고리즘 계산 (Late Fusion 방식)
+    
+    새로운 계산식:
+    1. 텍스트 감정 점수 정규화: score = (score_bps - 5000) / 5000, magnitude = magnitude_x1000 / 1000
+    2. 텍스트 감정을 6개 감정으로 확장하는 가중치 계산
+    3. Late Fusion: α * audio_score + β * text_score (α=0.7, β=0.3)
+    4. top_emotion과 confidence 계산
+    """
+    from .repositories.voice_repo import get_audio_probs_by_voice_id, get_text_sentiment_by_voice_id
+    from .models import VoiceAnalyze, VoiceContent
+    
+    # 1. 데이터 조회
+    audio_probs = get_audio_probs_by_voice_id(db, voice_id)
+    text_score_raw, text_magnitude_raw = get_text_sentiment_by_voice_id(db, voice_id)
+    
+    # VoiceAnalyze와 VoiceContent 원본 데이터 확인
+    voice_analyze = db.query(VoiceAnalyze).filter(VoiceAnalyze.voice_id == voice_id).first()
+    voice_content = db.query(VoiceContent).filter(VoiceContent.voice_id == voice_id).first()
+    
+    if not voice_analyze:
+        raise HTTPException(status_code=404, detail=f"VoiceAnalyze not found for voice_id={voice_id}")
+    if not voice_content:
+        raise HTTPException(status_code=404, detail=f"VoiceContent not found for voice_id={voice_id}")
+    
+    # 2. 텍스트 감정 점수 정규화 (스케일 복구 규칙 적용)
+    score_bps = voice_content.score_bps if voice_content.score_bps is not None else 5000
+    magnitude_x1000 = voice_content.magnitude_x1000 if voice_content.magnitude_x1000 is not None else 0
+    
+    # 읽기 시: score = (score_bps / 10000) * 2 - 1  → [-1, 1]
+    score = (float(score_bps) / 10000.0) * 2.0 - 1.0
+    magnitude = float(magnitude_x1000) / 1000.0  # 원래 강도 단위 복원
+    
+    # Clamp score to [-1, 1]
+    score = max(-1.0, min(1.0, score))
+    magnitude = max(0.0, magnitude)
+    
+    # 3. 텍스트 감정을 6개 감정으로 확장하는 가중치 계산 (neutral 과대 비중 방지)
+    pos = max(0.0, score)
+    neg = max(0.0, -score)
+    mag = max(0.0, min(1.0, magnitude))
+    # 중립은 magnitude가 낮을 때만 비중 유지, 강도가 높을수록 감정으로 분배
+    neutral_base = (1.0 - abs(score)) * (1.0 - mag)
+    text_emotion_weight = {
+        "happy": pos * mag,
+        "sad": neg * mag,
+        "neutral": max(0.0, neutral_base),
+        "angry": neg * mag * 0.8,
+        "fear": neg * mag * 0.7,
+        "surprise": pos * mag * 0.8,
+    }
+    
+    # 텍스트 가중치 정규화 (0~1 범위로)
+    text_sum = sum(text_emotion_weight.values())
+    if text_sum > 0:
+        for k in text_emotion_weight:
+            text_emotion_weight[k] = text_emotion_weight[k] / text_sum
+    
+    # 4. Late Fusion: α * audio_score + β * text_score (원래 비중)
+    alpha = 0.7  # 오디오 비중
+    beta = 0.3   # 텍스트 비중
+    
+    emotions = ["happy", "sad", "neutral", "angry", "fear", "surprise"]
+    composite_score = {}
+    
+    for emotion in emotions:
+        audio_score = audio_probs.get(emotion, 0.0)
+        text_score = text_emotion_weight.get(emotion, 0.0)
+        composite_score[emotion] = alpha * audio_score + beta * text_score
+    
+    # 5. 대표 감정 결정
+    top_emotion = max(composite_score, key=composite_score.get)
+    top_confidence = composite_score[top_emotion]
+    top_confidence_bps = int(top_confidence * 10000)
+    
+    # 6. 감정별 수치를 bps로 변환
+    emotion_bps = {emotion: int(score * 10000) for emotion, score in composite_score.items()}
+    
+    # fear -> anxiety 변환 (출력용)
+    if top_emotion == "fear":
+        top_emotion_display = "anxiety"
+    else:
+        top_emotion_display = top_emotion
+    
+    emotion_bps_display = {}
+    for emotion, bps in emotion_bps.items():
+        key = "anxiety" if emotion == "fear" else emotion
+        emotion_bps_display[key] = bps
+    
+    return {
+        "voice_id": voice_id,
+        "input_data": {
+            "audio": {
+                "happy_bps": voice_analyze.happy_bps,
+                "sad_bps": voice_analyze.sad_bps,
+                "neutral_bps": voice_analyze.neutral_bps,
+                "angry_bps": voice_analyze.angry_bps,
+                "fear_bps": voice_analyze.fear_bps,
+                "surprise_bps": voice_analyze.surprise_bps,
+            },
+            "text": {
+                "score_bps": score_bps,
+                "magnitude_x1000": magnitude_x1000,
+                "score_normalized": score,
+                "magnitude_normalized": magnitude,
+            }
+        },
+        "intermediate": {
+            "audio_probs": {k: round(v, 4) for k, v in audio_probs.items()},
+            "text_emotion_weight": {k: round(v, 4) for k, v in text_emotion_weight.items()},
+        },
+        "fusion_params": {
+            "alpha": alpha,
+            "beta": beta,
+        },
+        "composite_score": {k: round(v, 4) for k, v in composite_score.items()},
+        "result": {
+            "top_emotion": top_emotion_display,
+            "top_confidence_bps": top_confidence_bps,
+            "emotion_bps": emotion_bps_display,
+        }
+    }
 
 # ---------------- router 등록 ----------------
 app.include_router(users_router)
