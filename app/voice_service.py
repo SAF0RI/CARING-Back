@@ -552,6 +552,12 @@ class VoiceService:
             bucket = os.getenv("S3_BUCKET_NAME")
             
             voice_list = []
+            def map_emotion(e: Optional[str]) -> Optional[str]:
+                try:
+                    return "anxiety" if (e and str(e).lower() == "fear") else e
+                except Exception:
+                    return e
+
             for voice in voices:
                 # 생성 날짜
                 created_at = voice.created_at.isoformat() if voice.created_at else ""
@@ -559,7 +565,7 @@ class VoiceService:
                 # 감정 (voice_composite에서 top_emotion 가져오기, 없으면 null)
                 emotion = None
                 if voice.voice_composite:
-                    emotion = voice.voice_composite.top_emotion
+                    emotion = map_emotion(voice.voice_composite.top_emotion)
                 
                 # 질문 제목 (voice_question -> question.content)
                 question_title = None
@@ -607,9 +613,15 @@ class VoiceService:
         try:
             voices = self.db_service.get_care_voices(care_username, date=date)
             items = []
+            def map_emotion(e: Optional[str]) -> Optional[str]:
+                try:
+                    return "anxiety" if (e and str(e).lower() == "fear") else e
+                except Exception:
+                    return e
+
             for v in voices:
                 created_at = v.created_at.isoformat() if v.created_at else ""
-                emotion = v.voice_composite.top_emotion if v.voice_composite else None
+                emotion = map_emotion(v.voice_composite.top_emotion) if v.voice_composite else None
                 items.append({
                     "voice_id": v.voice_id,
                     "created_at": created_at,

@@ -1,3 +1,7 @@
+# Local seed/data scripts (ignore)
+scripts/seed_*.py
+scripts/*.sql
+scripts/seed_october_2025.py
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

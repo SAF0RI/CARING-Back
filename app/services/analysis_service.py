@@ -29,7 +29,10 @@ def _call_openai(messages: List[Dict[str, str]], model: Optional[str] = None) ->
 
 
 def _query_weekly_top_emotions(session: Session, user_id: int, month: str, week: int) -> Dict[str, List[str]]:
-    """특정 주차의 날짜별 top_emotion 목록 조회 (YYYY-MM-DD -> [emotion,...])"""
+    """특정 주차의 날짜별 대표 감정 1개로 집계 (YYYY-MM-DD -> [top_emotion])
+    - 데이터 소스: voice_composite.top_emotion (fear는 anxiety로 매핑)
+    - Unknown 제외 가능한 경우 제외 후 최빈값/동률-선출 로직 적용
+    """
     from calendar import monthrange
     try:
         y, m = map(int, month.split("-"))
@@ -49,14 +52,40 @@ def _query_weekly_top_emotions(session: Session, user_id: int, month: str, week:
         )
         .order_by(Voice.created_at.asc())
     )
-    by_day: Dict[str, List[str]] = defaultdict(list)
+    def _map_emotion(e: Optional[str]) -> str:
+        if not e:
+            return "unknown"
+        try:
+            return "anxiety" if str(e).lower() == "fear" else str(e)
+        except Exception:
+            return str(e)
+    # 원시 수집(해당 날짜의 모든 항목)
+    raw_by_day: Dict[str, List[str]] = defaultdict(list)
     for v, vc in q:
         day = v.created_at.date().strftime("%Y-%m-%d") if v.created_at else None
         if not day:
             continue
         em = (vc.top_emotion or "unknown") if vc else "unknown"
-        by_day[day].append(em)
-    return dict(by_day)
+        raw_by_day[day].append(_map_emotion(em))
+    # 날짜별 대표 감정 1개 산출
+    from collections import Counter
+    by_day_top: Dict[str, List[str]] = {}
+    for day in sorted(raw_by_day.keys()):
+        values = raw_by_day[day]
+        non_unknown = [e for e in values if e and str(e).lower() not in ("unknown", "null", "none")]
+        if non_unknown:
+            cnt = Counter(non_unknown)
+            top, top_count = cnt.most_common(1)[0]
+            ties = {e for e, c in cnt.items() if c == top_count}
+            if len(ties) > 1:
+                for e in values:
+                    if e in ties:
+                        top = e
+                        break
+        else:
+            top = values[0] if values else "unknown"
+        by_day_top[day] = [top]
+    return by_day_top
 
 
 def _query_month_emotion_counts(session: Session, user_id: int, month: str) -> Dict[str, int]:
@@ -81,10 +110,18 @@ def _query_month_emotion_counts(session: Session, user_id: int, month: str) -> D
             Voice.created_at < next_month,
         )
     )
+    def _map_emotion(e: Optional[str]) -> str:
+        if not e:
+            return "unknown"
+        try:
+            return "anxiety" if str(e).lower() == "fear" else str(e)
+        except Exception:
+            return str(e)
+
     cnt = Counter()
     for v, vc in q:
         em = (vc.top_emotion or "unknown") if vc else "unknown"
-        cnt[em] += 1
+        cnt[_map_emotion(em)] += 1
     return dict(cnt)
 
 
@@ -104,7 +141,8 @@ def _build_weekly_prompt(user_name: str, by_day: Dict[str, List[str]]) -> List[D
             "너는 노년층 혹은 장애인 케어 서비스의 감정 코치다. 한국어로 공감적이고 자연스럽게, 1~3문장으로 "
             "주간 감정 추세를 반드시 요약해라. 데이터가 적어도 관찰 가능한 내용을 바탕으로 요약을 제공해야 한다. "
             "추측하지 말고 관찰적인 표현만 사용하고, 과장 없이 사실 중심으로 서술해라. "
-            "조언은 최소화하고 관찰 결과에 집중해라.\n\n"
+            "조언은 최소화하고 관찰 결과에 집중해라. 또한 early/mid/late(초반/중반/후반) 시기를 구분하여 감정 흐름이 바뀌는 지점을 틀림없이 분석하여라. "
+            "감정 라벨은 반드시 {happy, sad, neutral, angry, anxiety, surprise} 집합만 사용한다. fear는 anxiety로 매핑할것.\n\n"
             "좋은 예시:\n"
             "- '주 초반에는 즐겁고 안정적인 날들이 많았지만, 목요일부터 감정상태가 급격히 나빠지고 있습니다.'\n"
             "- '이번 주는 전체적으로 즐거운 감정 혹은 안정된 상태를 유지하고 있어요.'\n"
@@ -115,6 +153,7 @@ def _build_weekly_prompt(user_name: str, by_day: Dict[str, List[str]]) -> List[D
         "role": "user",
         "content": (
             "다음 날짜별 감정 목록을 바탕으로 주간 감정 추세를 한 문단(1~3문장)으로 요약해줘. "
+            "초반/중반/후반 흐름을 구분하고, 감정 매핑 오류가 없도록 분노와 불안을 혼동하지 마. 불안은 anxiety로 표기해. "
             "데이터가 적어도 관찰 가능한 내용을 바탕으로 반드시 요약을 제공해줘.\n\n" + "\n".join(lines)
         ),
     }
@@ -123,14 +162,25 @@ def _build_weekly_prompt(user_name: str, by_day: Dict[str, List[str]]) -> List[D
 
 def _build_frequency_prompt(user_name: str, counts: Dict[str, int]) -> List[Dict[str, str]]:
     """월간 빈도수 분석 프롬프트 구성"""
-    items = ", ".join([f"{k}:{v}" for k, v in sorted(counts.items())]) if counts else "(데이터 없음)"
+    # 사람이 읽기 쉬운 고정된 감정 라벨 순서와 함께 원시/정렬 정보를 모두 제공
+    ordered_labels = ["happy", "sad", "neutral", "angry", "anxiety", "surprise"]
+    # 키가 누락된 항목은 0으로 채움
+    norm_counts = {k: int(counts.get(k, 0)) for k in ordered_labels}
+    total = sum(norm_counts.values()) or 1
+    # 백분율 계산(정수 반올림)
+    pct = {k: int(round(v * 100.0 / total)) for k, v in norm_counts.items()}
+    # 내림차순 정렬 목록 제공
+    ranked = sorted(norm_counts.items(), key=lambda kv: kv[1], reverse=True)
+    items = ", ".join([f"{k}:{v}" for k, v in ranked]) if counts else "(데이터 없음)"
     system = {
         "role": "system",
         "content": (
             "너는 노년층 혹은 장애인 케어 서비스의 감정 코치다. 한국어로 공감적이고 자연스럽게, 1~3문장으로 "
             "월간 감정 빈도 특성을 반드시 요약해라. 데이터가 적어도 관찰 가능한 내용을 바탕으로 요약을 제공해야 한다. "
             "추측하지 말고 관찰적인 표현만 사용하고, 과장 없이 사실 중심으로 서술해라. "
-            "조언은 최소화하고 관찰 결과에 집중해라.\n\n"
+            "조언은 최소화하고 관찰 결과에 집중해라. 감정 라벨은 반드시 {happy, sad, neutral, angry, anxiety, surprise}만 사용하고, fear는 anxiety로 해석한다. "
+            "다음 규칙을 반드시 준수하라: (1) 수치(rank)에 맞게 기술하고, 상위 감정들만 강조하라. (2) '상대적으로 높다/많다'라는 표현은 해당 감정의 빈도가 같은 달 내 다른 감정보다 순위가 높거나, 상위권(1~2위)이며 비율 차이가 10%p 이내일 때만 사용하라. "
+            "(3) 슬픔(sad)과 불안(anxiety), 분노(angry)를 혼동하지 말고, 각 감정명은 정확히 표기하라. (4) 데이터가 적을 경우 과장하지 말고 '일부 확인'과 같은 표현을 사용하라.\n\n"
             "좋은 예시:\n"
             "- '10월은 평온하고 안정적인 마음으로 시작하셨네요! 다만, 슬픔, 불안과 같은 감정들이 일부 확인되는것으로 보입니다.'\n"
             "- '이번 달에는 화가 나는 감정이 다소 자주 나타났습니다. 이는 일상에서의 스트레스나 불만이 일부 확인된 것으로 보입니다.'\n"
@@ -140,8 +190,11 @@ def _build_frequency_prompt(user_name: str, counts: Dict[str, int]) -> List[Dict
     user = {
         "role": "user",
         "content": (
-            f"대상 사용자: {user_name}\n이 달의 대표 감정 빈도수는 다음과 같아: {items}. "
-            "월간 감정 경향을 한 문단(1~3문장)으로 요약해줘. 데이터가 적어도 관찰 가능한 내용을 바탕으로 반드시 요약을 제공해줘."
+            f"대상 사용자: {user_name}\n"
+            f"총합: {total}건\n"
+            f"정렬(내림차순): {items}\n"
+            f"백분율: happy={pct['happy']}%, sad={pct['sad']}%, neutral={pct['neutral']}%, angry={pct['angry']}%, anxiety={pct['anxiety']}%, surprise={pct['surprise']}%\n"
+            "위의 수치에 정확히 기반하여 월간 감정 경향을 1~3문장으로 요약해줘. 순위/비율과 모순되는 표현은 사용하지 마."
         ),
     }
     return [system, user]

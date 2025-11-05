@@ -423,10 +423,15 @@ async def get_user_voice_detail(voice_id: int, username: str, db: Session = Depe
     result = voice_service.get_user_voice_detail(voice_id, username)
     if not result.get("success"):
         raise HTTPException(status_code=404, detail=result.get("error", "Not Found"))
+    def map_emotion(e: Optional[str]) -> Optional[str]:
+        try:
+            return "anxiety" if (e and str(e).lower() == "fear") else e
+        except Exception:
+            return e
     return UserVoiceDetailResponse(
         voice_id=voice_id,
         title=result.get("title"),
-        top_emotion=result.get("top_emotion"),
+        top_emotion=map_emotion(result.get("top_emotion")),
         created_at=result.get("created_at", ""),
         voice_content=result.get("voice_content"),
         s3_url=result.get("s3_url"),
@@ -503,6 +508,13 @@ async def get_user_emotion_frequency(username: str, month: str, db: Session = De
         voice_service = get_voice_service(db)
         base = voice_service.get_user_emotion_monthly_frequency(username, month)
         frequency = base.get("frequency", {}) if base.get("success") else {}
+        # fear -> anxiety 키 매핑
+        if frequency:
+            mapped = {}
+            for k, v in frequency.items():
+                key = "anxiety" if (isinstance(k, str) and k.lower() == "fear") else k
+                mapped[key] = mapped.get(key, 0) + int(v)
+            frequency = mapped
         return FrequencyAnalysisCombinedResponse(message=message, frequency=frequency)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"분석 실패: {str(e)}")
@@ -517,6 +529,11 @@ async def get_user_emotion_weekly(username: str, month: str, week: int, db: Sess
         voice_service = get_voice_service(db)
         weekly_result = voice_service.get_user_emotion_weekly_summary(username, month, week)
         weekly = weekly_result.get("weekly", []) if weekly_result.get("success") else []
+        # weekly 항목 top_emotion fear -> anxiety 매핑
+        if weekly:
+            for item in weekly:
+                if isinstance(item, dict) and str(item.get("top_emotion", "")).lower() == "fear":
+                    item["top_emotion"] = "anxiety"
         return WeeklyAnalysisCombinedResponse(message=message, weekly=weekly)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"분석 실패: {str(e)}")
@@ -541,7 +558,8 @@ async def get_user_top_emotion(username: str, db: Session = Depends(get_db)):
     date_str = today.strftime("%Y-%m-%d")
     
     # 그날의 대표 emotion 조회
-    top_emotion = get_top_emotion_for_date(db, user.user_id, date_str)
+    raw_top = get_top_emotion_for_date(db, user.user_id, date_str)
+    top_emotion = ("anxiety" if (raw_top and str(raw_top).lower() == "fear") else raw_top)
     
     return TopEmotionResponse(
         date=date_str,
@@ -685,6 +703,13 @@ async def get_emotion_monthly_frequency(
         care_service = CareService(db)
         base = care_service.get_emotion_monthly_frequency(care_username, month)
         frequency = base.get("frequency", {}) if base.get("success") else {}
+        # fear -> anxiety 키 매핑
+        if frequency:
+            mapped = {}
+            for k, v in frequency.items():
+                key = "anxiety" if (isinstance(k, str) and k.lower() == "fear") else k
+                mapped[key] = mapped.get(key, 0) + int(v)
+            frequency = mapped
         return FrequencyAnalysisCombinedResponse(message=message, frequency=frequency)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"분석 실패: {str(e)}")
@@ -710,6 +735,11 @@ async def get_emotion_weekly_summary(
         care_service = CareService(db)
         weekly_result = care_service.get_emotion_weekly_summary(care_username, month, week)
         weekly = weekly_result.get("weekly", []) if weekly_result.get("success") else []
+        # weekly 항목 top_emotion fear -> anxiety 매핑
+        if weekly:
+            for item in weekly:
+                if isinstance(item, dict) and str(item.get("top_emotion", "")).lower() == "fear":
+                    item["top_emotion"] = "anxiety"
         return WeeklyAnalysisCombinedResponse(message=message, weekly=weekly)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"분석 실패: {str(e)}")
@@ -781,7 +811,8 @@ async def get_care_top_emotion(care_username: str, db: Session = Depends(get_db)
     date_str = today.strftime("%Y-%m-%d")
     
     # 그날의 대표 emotion 조회
-    top_emotion = get_top_emotion_for_date(db, connected_user.user_id, date_str)
+    raw_top = get_top_emotion_for_date(db, connected_user.user_id, date_str)
+    top_emotion = ("anxiety" if (raw_top and str(raw_top).lower() == "fear") else raw_top)
     
     return CareTopEmotionResponse(
         date=date_str,
@@ -831,7 +862,7 @@ async def get_care_voice_composite(voice_id: int, care_username: str, db: Sessio
         "angry_pct": pct(row.angry_bps),
         "anxiety_pct": pct(row.fear_bps),
         "surprise_pct": pct(row.surprise_bps),
-        "top_emotion": row.top_emotion,
+        "top_emotion": ("anxiety" if (row.top_emotion and str(row.top_emotion).lower() == "fear") else row.top_emotion),
         "top_emotion_confidence_pct": pct(row.top_emotion_confidence_bps or 0),
     }
 
