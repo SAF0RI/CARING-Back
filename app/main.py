@@ -401,9 +401,20 @@ async def get_user_info(username: str, db: Session = Depends(get_db)):
     )
 
 @users_router.get("/voices", response_model=UserVoiceListResponse)
-async def get_user_voice_list(username: str, db: Session = Depends(get_db)):
+async def get_user_voice_list(
+    username: str,
+    date: Optional[str] = None,  # YYYY-MM-DD 형식, Optional
+    db: Session = Depends(get_db)
+):
+    # 날짜 형식 검증 (있을 경우만)
+    if date:
+        try:
+            datetime.strptime(date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
     voice_service = get_voice_service(db)
-    result = voice_service.get_user_voice_list(username)
+    result = voice_service.get_user_voice_list(username, date=date)
     return UserVoiceListResponse(success=result["success"], voices=result.get("voices", []))
 
 @users_router.get("/voices/{voice_id}", response_model=UserVoiceDetailResponse)

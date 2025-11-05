@@ -335,9 +335,7 @@ class VoiceService:
             
             if "sentiment" in nlp_result and nlp_result["sentiment"]:
                 sentiment = nlp_result["sentiment"]
-                # 스코어 스케일 복구: score∈[-1,1] → score_bps∈[0,10000]
-                score = max(-1.0, min(1.0, float(sentiment.get("score", 0))))
-                score_bps = int((score + 1.0) / 2.0 * 10000)  # 0~10000
+                score_bps = int(sentiment.get("score", 0) * 10000)  # -10000~10000
                 magnitude = sentiment.get("magnitude", 0)
                 magnitude_x1000 = int(magnitude * 1000)  # 0~?
             
@@ -424,8 +422,7 @@ class VoiceService:
             sad = to_bps(probs.get("sad", probs.get("sadness", 0)))
             neutral = to_bps(probs.get("neutral", 0))
             angry = to_bps(probs.get("angry", probs.get("anger", 0)))
-            # 'anxiety'를 fear 채널로 매핑 (모델이 불안을 anxiety로 반환함)
-            fear = to_bps(probs.get("fear", probs.get("fearful", probs.get("anxiety", 0))))
+            fear = to_bps(probs.get("fear", probs.get("fearful", 0)))
             surprise = to_bps(probs.get("surprise", probs.get("surprised", 0)))
 
             # 모델 응답 키 보정: emotion_service는 기본적으로 "emotion"을 반환
@@ -506,12 +503,13 @@ class VoiceService:
         finally:
             db.close()
     
-    def get_user_voice_list(self, username: str) -> Dict[str, Any]:
+    def get_user_voice_list(self, username: str, date: Optional[str] = None) -> Dict[str, Any]:
         """
         사용자 음성 리스트 조회
         
         Args:
             username: 사용자 아이디
+            date: 날짜 필터 (YYYY-MM-DD, Optional). None이면 전체 조회
             
         Returns:
             dict: 음성 리스트
@@ -525,8 +523,30 @@ class VoiceService:
                     "voices": []
                 }
             
-            # 2. 사용자의 음성 목록 조회
-            voices = self.db_service.get_voices_by_user(user.user_id)
+            # 2. 사용자의 음성 목록 조회 (선택적 날짜 필터)
+            from sqlalchemy.orm import joinedload
+            from datetime import datetime as _dt
+
+            q = (
+                self.db.query(Voice)
+                .filter(Voice.user_id == user.user_id)
+            )
+
+            if date:
+                try:
+                    target_date = _dt.strptime(date, "%Y-%m-%d").date()
+                    start_dt = _dt.combine(target_date, _dt.min.time())
+                    end_dt = _dt.combine(target_date, _dt.max.time())
+                    q = q.filter(Voice.created_at >= start_dt, Voice.created_at <= end_dt)
+                except ValueError:
+                    # 형식 오류 시 전체 조회로 fallback
+                    pass
+
+            voices = (
+                q.options(joinedload(Voice.questions), joinedload(Voice.voice_composite))
+                 .order_by(Voice.created_at.desc())
+                 .all()
+            )
             
             # S3 버킷 정보
             bucket = os.getenv("S3_BUCKET_NAME")
@@ -540,9 +560,6 @@ class VoiceService:
                 emotion = None
                 if voice.voice_composite:
                     emotion = voice.voice_composite.top_emotion
-                    # fear -> anxiety 변환 (출력용)
-                    if emotion == "fear":
-                        emotion = "anxiety"
                 
                 # 질문 제목 (voice_question -> question.content)
                 question_title = None
@@ -593,9 +610,6 @@ class VoiceService:
             for v in voices:
                 created_at = v.created_at.isoformat() if v.created_at else ""
                 emotion = v.voice_composite.top_emotion if v.voice_composite else None
-                # fear -> anxiety 변환 (출력용)
-                if emotion == "fear":
-                    emotion = "anxiety"
                 items.append({
                     "voice_id": v.voice_id,
                     "created_at": created_at,
@@ -619,9 +633,6 @@ class VoiceService:
             top_emotion = None
             if voice.voice_composite:
                 top_emotion = voice.voice_composite.top_emotion
-                # fear -> anxiety 변환 (출력용)
-                if top_emotion == "fear":
-                    top_emotion = "anxiety"
 
             created_at = voice.created_at.isoformat() if voice.created_at else ""
 
@@ -805,12 +816,7 @@ class VoiceService:
                 .group_by(VoiceComposite.top_emotion)
                 .all()
             )
-            # fear -> anxiety 변환 (출력용)
-            freq = {}
-            for emotion, count in results:
-                if emotion:
-                    key = "anxiety" if str(emotion) == "fear" else str(emotion)
-                    freq[key] = count
+            freq = {str(emotion): count for emotion, count in results if emotion}
             return {"success": True, "frequency": freq}
         except Exception as e:
             return {"success": False, "frequency": {}, "message": f"error: {str(e)}"}
@@ -868,12 +874,10 @@ class VoiceService:
                     top, val = cnt.most_common(1)[0]
                     top_emotions = [e for e, c in cnt.items() if c == val]
                     selected = day_first[d] if len(top_emotions) > 1 and day_first[d] in top_emotions else top
-                # fear -> anxiety 변환 (출력용)
-                top_emotion_display = "anxiety" if selected and str(selected) == "fear" else selected
                 result.append({
                     "date": d.isoformat(),
                     "weekday": d.strftime("%a"),
-                    "top_emotion": top_emotion_display
+                    "top_emotion": selected
                 })
             return {"success": True, "weekly": result}
         except Exception as e:
