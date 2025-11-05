@@ -741,12 +741,18 @@ async def get_care_notifications(care_username: str, db: Session = Depends(get_d
         .all()
     )
     
+    def map_emotion(e: Optional[str]) -> Optional[str]:
+        try:
+            return "anxiety" if (e and str(e).lower() == "fear") else e
+        except Exception:
+            return e
+
     notification_items = [
         {
             "notification_id": n.notification_id,
             "voice_id": n.voice_id,
             "name": n.name,
-            "top_emotion": n.top_emotion,
+            "top_emotion": map_emotion(n.top_emotion),
             "created_at": n.created_at.isoformat() if n.created_at else ""
         }
         for n in notifications
@@ -823,7 +829,7 @@ async def get_care_voice_composite(voice_id: int, care_username: str, db: Sessio
         "sad_pct": pct(row.sad_bps),
         "neutral_pct": pct(row.neutral_bps),
         "angry_pct": pct(row.angry_bps),
-        "fear_pct": pct(row.fear_bps),
+        "anxiety_pct": pct(row.fear_bps),
         "surprise_pct": pct(row.surprise_bps),
         "top_emotion": row.top_emotion,
         "top_emotion_confidence_pct": pct(row.top_emotion_confidence_bps or 0),
