@@ -217,55 +217,74 @@ def fuse_VA(audio_probs: Dict[str, float], text_score: float, text_magnitude: fl
     alpha = adaptive_weights_for_valence(audio_probs, v_text, a_text)
     beta = adaptive_weights_for_arousal(audio_probs, a_audio, a_text)
 
-    # Final fusion
+    # Final fusion (VA)
     v_final = alpha * v_audio + (1.0 - alpha) * v_text
     a_final = beta * a_audio + (1.0 - beta) * a_text
     intensity = sqrt(v_final * v_final + a_final * a_final)
 
-    # Similarities to anchors (RBF or cosine)
-    # RBF 커널 사용 (옵션): sigma=0.75 (0.6~0.9 권장 그리드 탐색)
-    use_rbf = True  # True: RBF, False: cosine
-    sigma = 0.75
-    
-    sims: Dict[str, float] = {}
-    for emo, (v_e, a_e) in EMOTION_VA.items():
-        if use_rbf:
-            sims[emo] = _rbf_similarity((v_final, a_final), (v_e, a_e), sigma=sigma)
-        else:
-            sims[emo] = _cosine_similarity((v_final, a_final), (v_e, a_e))
-    
-    # 소프트 마스킹: audio_probs에서 0인 감정은 sims에서 25%만 남김
-    sims = apply_zero_prob_mask(sims, audio_probs, threshold=0.0, mode="soft", factor=0.25)
-    
-    # 모두 0이면 neutral만 1.0로 설정해 정규화 가능하게
-    if sum(sims.values()) <= 1e-12:
-        sims = {k: (1.0 if k == "neutral" else 0.0) for k in sims.keys()}
-    
-    # surprise 다운웨이트: 상황부 가중치 적용
-    # V_final > 0 and A_final > 0.6: *0.9, else *1.0
-    if v_final > 0 and a_final > 0.6:
-        surprise_weight = 0.9
-    else:
-        surprise_weight = 1.0
-    sims["surprise"] = sims.get("surprise", 0.0) * surprise_weight
-    per_emotion_bps = _normalize_to_bps(sims)
+    # Late Fusion: 감정별 확률 분포 결합 (neutral 과대 방지 분배)
+    pos = max(0.0, v_text)
+    neg = max(0.0, -v_text)
+    mag = max(0.0, min(1.0, a_text))
+    neutral_base = (1.0 - abs(v_text)) * (1.0 - mag)
+    text_emotion_weight: Dict[str, float] = {
+        "happy": pos * mag,
+        "sad": neg * mag,
+        "neutral": max(0.0, neutral_base),
+        "angry": neg * mag * 0.8,
+        "fear": neg * mag * 0.7,
+        "surprise": pos * mag * 0.8,
+    }
+    # 긍정 텍스트( v_text > 0 )일 때 happy 동적 가중(증가) + surprise 경감, 이후 재정규화
+    if v_text > 0:
+        # 긍정일 때 happy 가중을 더 높임
+        boost = 1.0 + 1.2 * mag * float(abs(v_text))   # 최대 +1.3배까지 추가 가중 (cap 아래에서 제한)
+        if boost > 1.3:
+            boost = 1.3
+        damp  = max(0.5, 1.0 - 0.4 * mag * float(abs(v_text)))  # surprise는 최소 0.5배까지 감쇠
+        text_emotion_weight["happy"] = text_emotion_weight.get("happy", 0.0) * boost
+        text_emotion_weight["surprise"] = text_emotion_weight.get("surprise", 0.0) * damp
+    # 재정규화
+    t_sum = sum(text_emotion_weight.values())
+    if t_sum > 0:
+        for k in text_emotion_weight:
+            text_emotion_weight[k] = text_emotion_weight[k] / t_sum
 
-    # surprise 상한 완화: 10% → 20%로 상향
-    cap = 2000  # 20% (2000 bps)
-    sur = per_emotion_bps.get("surprise", 0)
-    if sur > cap:
-        over = sur - cap
-        per_emotion_bps["surprise"] = cap
-        others = {k: v for k, v in per_emotion_bps.items() if k != "surprise" and v > 0}
-        total_others = sum(others.values()) or 1
-        for k in others:
-            inc = round(over * (per_emotion_bps[k] / total_others))
-            per_emotion_bps[k] += int(inc)
-        # rounding diff fix
-        diff = 10000 - sum(per_emotion_bps.values())
-        if diff != 0 and per_emotion_bps:
-            kmax = max(per_emotion_bps, key=lambda k: per_emotion_bps[k])
-            per_emotion_bps[kmax] += diff
+    # 감정별 분포 결합에서 텍스트 비중을 구간별로 가중
+    # - |v_text| <= 0.5: 기존 가중 유지 (base)
+    # - |v_text| > 0.5: 텍스트 비중 추가 상승 (strong)
+    mag = max(0.0, min(1.0, a_text))
+    abs_v = abs(float(v_text))
+    base = 0.3 + 0.5 * mag * abs_v
+    if abs_v <= 0.5:
+        beta_prob = base
+    else:
+        # 임계 초과분 만큼 추가 가중 (최대 ~0.25), 상한 0.9
+        extra = 0.5 * mag * (abs_v - 0.5)  # max 0.5*mag*0.5 = 0.25
+        beta_prob = base + extra
+    if beta_prob < 0.3:
+        beta_prob = 0.3
+    elif beta_prob > 0.9:
+        beta_prob = 0.9
+    alpha_prob = 1.0 - beta_prob
+    composite_score: Dict[str, float] = {}
+    for emo in ["happy", "sad", "neutral", "angry", "fear", "surprise"]:
+        a_sc = float(audio_probs.get(emo, 0.0))
+        t_sc = float(text_emotion_weight.get(emo, 0.0))
+        composite_score[emo] = alpha_prob * a_sc + beta_prob * t_sc
+
+    # 감정별 가중치 조정: neutral은 더 강하게 억제(긍정일수록 추가 억제)
+    neutral_base_factor = 0.6
+    if v_text > 0:
+        # v_text, a_text가 클수록 neutral 추가 감쇠 (최소 0.3배까지)
+        extra_down = 0.2 * max(0.0, min(1.0, a_text)) * float(abs(v_text))
+        neutral_factor = max(0.3, neutral_base_factor - extra_down)
+    else:
+        neutral_factor = neutral_base_factor
+    composite_score["neutral"] = composite_score.get("neutral", 0.0) * neutral_factor * 0.7
+    composite_score["surprise"] = composite_score.get("surprise", 0.0) * 0.9
+
+    per_emotion_bps = _normalize_to_bps(composite_score)
 
     # Top emotion/confidence
     if per_emotion_bps:
