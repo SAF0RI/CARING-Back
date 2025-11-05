@@ -812,9 +812,6 @@ async def get_care_voice_composite(voice_id: int, care_username: str, db: Sessio
     def pct(bps: int | None) -> int:
         return int(round((bps or 0) / 100))
 
-    # fear -> anxiety 변환 (출력용)
-    top_display = "anxiety" if (row.top_emotion == "fear") else row.top_emotion
-
     return {
         "voice_id": voice_id,
         "username": connected_user.username,  # 매칭된 유저의 username
@@ -828,7 +825,7 @@ async def get_care_voice_composite(voice_id: int, care_username: str, db: Sessio
         "angry_pct": pct(row.angry_bps),
         "fear_pct": pct(row.fear_bps),
         "surprise_pct": pct(row.surprise_bps),
-        "top_emotion": top_display,
+        "top_emotion": row.top_emotion,
         "top_emotion_confidence_pct": pct(row.top_emotion_confidence_bps or 0),
     }
 
