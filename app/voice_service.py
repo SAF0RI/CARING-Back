@@ -422,7 +422,7 @@ class VoiceService:
             sad = to_bps(probs.get("sad", probs.get("sadness", 0)))
             neutral = to_bps(probs.get("neutral", 0))
             angry = to_bps(probs.get("angry", probs.get("anger", 0)))
-            fear = to_bps(probs.get("fear", probs.get("fearful", probs.get("anxiety", 0))))
+            fear = to_bps(probs.get("fear", probs.get("fearful", 0)))
             surprise = to_bps(probs.get("surprise", probs.get("surprised", 0)))
 
             # 모델 응답 키 보정: emotion_service는 기본적으로 "emotion"을 반환

@@ -922,7 +922,7 @@ async def test_emotion_analyze(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail=f"emotion analyze failed: {str(e)}")
 
 @test_router.get("/voice/{voice_id}/fusion")
-async def test_emotion_fusion(voice_id: int, save: bool = False, db: Session = Depends(get_db)):
+async def test_emotion_fusion(voice_id: int, db: Session = Depends(get_db)):
     """테스트: 새로운 감정 융합 알고리즘 계산 (Late Fusion 방식)
 
     새로운 계산식:
@@ -937,9 +937,6 @@ async def test_emotion_fusion(voice_id: int, save: bool = False, db: Session = D
 
     """
     from .repositories.voice_repo import get_audio_probs_by_voice_id, get_text_sentiment_by_voice_id
-    # voice_composite 저장을 위해 VA 계산 유틸 가져오기
-    from .services.va_fusion import audio_probs_to_VA, magnitude_to_arousal
-    from math import sqrt
 
     # 1. 데이터 조회
     audio_probs = get_audio_probs_by_voice_id(db, voice_id)
@@ -1004,17 +1001,8 @@ async def test_emotion_fusion(voice_id: int, save: bool = False, db: Session = D
     top_confidence = composite_score[top_emotion]
     top_confidence_bps = int(top_confidence * 10000)
 
-    # 6. 감정별 수치를 bps로 변환 (합 10000 정규화)
-    total_score = sum(max(0.0, s) for s in composite_score.values())
-    if total_score <= 0:
-        emotion_bps = {e: (10000 if e == "neutral" else 0) for e in composite_score.keys()}
-    else:
-        scaled = {e: int(round(max(0.0, s) * (10000.0 / total_score))) for e, s in composite_score.items()}
-        diff = 10000 - sum(scaled.values())
-        if diff != 0 and scaled:
-            kmax = max(scaled, key=lambda k: scaled[k])
-            scaled[kmax] = max(0, min(10000, scaled[kmax] + diff))
-        emotion_bps = scaled
+    # 6. 감정별 수치를 bps로 변환
+    emotion_bps = {emotion: int(score * 10000) for emotion, score in composite_score.items()}
 
     # fear -> anxiety 변환 (출력용)
     if top_emotion == "fear":
@@ -1027,41 +1015,8 @@ async def test_emotion_fusion(voice_id: int, save: bool = False, db: Session = D
         key = "anxiety" if emotion == "fear" else emotion
         emotion_bps_display[key] = bps
 
-    # 저장 옵션: voice_composite upsert (기존 스키마 유지)
-    saved = False
-    if save:
-        # VA 계산 (DB 스키마용 값)
-        v_audio, a_audio = audio_probs_to_VA(audio_probs)
-        v_text = score
-        a_text = magnitude_to_arousal(magnitude)
-        v_final = alpha * v_audio + (1.0 - alpha) * v_text
-        a_final = beta * a_audio + (1.0 - beta) * a_text
-        intensity = sqrt(v_final * v_final + a_final * a_final)
-
-        # upsert 호출
-        try:
-            from .repositories.composite_repo import upsert_voice_composite
-            res = {
-                "V_text": v_text,
-                "A_text": a_text,
-                "alpha": alpha,
-                "beta": beta,
-                "V_final": v_final,
-                "A_final": a_final,
-                "intensity": intensity,
-                "per_emotion_bps": emotion_bps,
-                # 저장은 원래 라벨 유지 (fear 그대로)
-                "top_emotion": top_emotion,
-                "top_confidence_bps": top_confidence_bps,
-            }
-            upsert_voice_composite(db, voice_id, res)
-            saved = True
-        except Exception as _:
-            saved = False
-
     return {
         "voice_id": voice_id,
-        "saved": saved,
         "input_data": {
             "audio": {
                 "happy_bps": voice_analyze.happy_bps,
