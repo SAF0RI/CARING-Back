@@ -23,14 +23,17 @@ def upsert_voice_composite(session: Session, voice_id: int, res: Dict[str, objec
     row.intensity_x1000 = to_x1000(float(res.get("intensity", 0.0)))
 
     per = res.get("per_emotion_bps", {}) or {}
+    # 'anxiety' 키가 넘어오는 경우를 대비해 fear 채널로 흡수
     row.happy_bps = int(per.get("happy", 0))
     row.sad_bps = int(per.get("sad", 0))
     row.neutral_bps = int(per.get("neutral", 0))
     row.angry_bps = int(per.get("angry", 0))
-    row.fear_bps = int(per.get("fear", 0))
+    row.fear_bps = int(per.get("fear", per.get("anxiety", 0)))
     row.surprise_bps = int(per.get("surprise", 0))
 
-    row.top_emotion = str(res.get("top_emotion", "neutral"))
+    # top_emotion이 'anxiety'로 표기되면 DB에는 'fear'로 저장
+    _top = str(res.get("top_emotion", "neutral"))
+    row.top_emotion = ("fear" if _top == "anxiety" else _top)
     row.top_emotion_confidence_bps = int(res.get("top_confidence_bps", 0))
 
     session.commit()
