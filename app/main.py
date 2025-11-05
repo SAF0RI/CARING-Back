@@ -41,8 +41,96 @@ from fastapi.exceptions import RequestValidationError
 from pymysql import OperationalError as PyMysqlOperationalError
 from sqlalchemy.exc import SQLAlchemyError
 import traceback
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+import time
+import logging
 
 app = FastAPI(title="Caring API")
+
+# TCP 연결 로깅 미들웨어
+class TCPConnectionLoggingMiddleware(BaseHTTPMiddleware):
+    """TCP 연결 정보를 로깅하는 미들웨어"""
+    
+    async def dispatch(self, request: Request, call_next):
+        # 요청 시작 시간
+        start_time = time.time()
+        
+        # TCP 연결 정보 추출
+        client_host = request.client.host if request.client else "unknown"
+        client_port = request.client.port if request.client else "unknown"
+        
+        # 서버 소켓 정보 (가능한 경우)
+        server_info = ""
+        try:
+            # ASGI scope에서 서버 정보 가져오기
+            if "server" in request.scope:
+                server_host, server_port = request.scope["server"]
+                server_info = f"server={server_host}:{server_port}"
+        except Exception:
+            pass
+        
+        # 요청 정보
+        method = request.method
+        path = request.url.path
+        request_id = f"{client_host}_{int(start_time * 1000)}"
+        
+        # TCP 연결 시작 로그
+        tcp_logger = logging.getLogger("tcp_connection")
+        tcp_logger.info(
+            f"[TCP] CONNECT request_id={request_id} "
+            f"client={client_host}:{client_port} {server_info} "
+            f"{method} {path}"
+        )
+        print(
+            f"[TCP] CONNECT request_id={request_id} "
+            f"client={client_host}:{client_port} {server_info} "
+            f"{method} {path}",
+            flush=True
+        )
+        
+        try:
+            # 요청 처리
+            response = await call_next(request)
+            
+            # 처리 시간 계산
+            process_time = time.time() - start_time
+            status_code = response.status_code
+            
+            # TCP 연결 종료 로그 (정상)
+            tcp_logger.info(
+                f"[TCP] CLOSE request_id={request_id} "
+                f"client={client_host}:{client_port} "
+                f"status={status_code} elapsed={process_time:.3f}s"
+            )
+            print(
+                f"[TCP] CLOSE request_id={request_id} "
+                f"client={client_host}:{client_port} "
+                f"status={status_code} elapsed={process_time:.3f}s",
+                flush=True
+            )
+            
+            return response
+            
+        except Exception as e:
+            # 예외 발생 시 TCP 연결 종료 로그 (비정상)
+            process_time = time.time() - start_time
+            tcp_logger.error(
+                f"[TCP] CLOSE_ERROR request_id={request_id} "
+                f"client={client_host}:{client_port} "
+                f"error={type(e).__name__}:{str(e)} elapsed={process_time:.3f}s",
+                exc_info=True
+            )
+            print(
+                f"[TCP] CLOSE_ERROR request_id={request_id} "
+                f"client={client_host}:{client_port} "
+                f"error={type(e).__name__}:{str(e)} elapsed={process_time:.3f}s",
+                flush=True
+            )
+            raise
+
+# TCP 연결 로깅 미들웨어 추가
+app.add_middleware(TCPConnectionLoggingMiddleware)
 
 
 # ============ 전역 예외 핸들러 ============
@@ -299,20 +387,9 @@ async def sign_out(username: str, db: Session = Depends(get_db)):
     }
 
 # ============== users 영역 (음성 업로드/조회/삭제 등) =============
-def _verify_user_role(username: str, db: Session):
-    """username이 USER 역할인지 검증"""
-    auth_service = get_auth_service(db)
-    user = auth_service.get_user_by_username(username)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    if user.role != 'USER':
-        raise HTTPException(status_code=403, detail="Only USER role can access this endpoint")
-    return user
-
 @users_router.get("", response_model=UserInfoResponse)
 async def get_user_info(username: str, db: Session = Depends(get_db)):
     """일반 유저 내정보 조회 (이름, username, 연결된 보호자 이름)"""
-    _verify_user_role(username, db)
     auth_service = get_auth_service(db)
     result = auth_service.get_user_info(username)
     if not result.get("success"):
@@ -325,14 +402,12 @@ async def get_user_info(username: str, db: Session = Depends(get_db)):
 
 @users_router.get("/voices", response_model=UserVoiceListResponse)
 async def get_user_voice_list(username: str, db: Session = Depends(get_db)):
-    _verify_user_role(username, db)
     voice_service = get_voice_service(db)
     result = voice_service.get_user_voice_list(username)
     return UserVoiceListResponse(success=result["success"], voices=result.get("voices", []))
 
 @users_router.get("/voices/{voice_id}", response_model=UserVoiceDetailResponse)
 async def get_user_voice_detail(voice_id: int, username: str, db: Session = Depends(get_db)):
-    _verify_user_role(username, db)
     voice_service = get_voice_service(db)
     result = voice_service.get_user_voice_detail(voice_id, username)
     if not result.get("success"):
@@ -348,7 +423,6 @@ async def get_user_voice_detail(voice_id: int, username: str, db: Session = Depe
 
 @users_router.delete("/voices/{voice_id}")
 async def delete_user_voice(voice_id: int, username: str, db: Session = Depends(get_db)):
-    _verify_user_role(username, db)
     voice_service = get_voice_service(db)
     result = voice_service.delete_user_voice(voice_id, username)
     if result.get("success"):
@@ -362,28 +436,59 @@ async def upload_voice_with_question(
     username: str = None,
     db: Session = Depends(get_db)
 ):
-    if not username:
-        raise HTTPException(status_code=400, detail="username is required as query parameter")
-    _verify_user_role(username, db)
-    voice_service = get_voice_service(db)
-    result = await voice_service.upload_voice_with_question(file, username, question_id)
-    if result["success"]:
-        return VoiceQuestionUploadResponse(
-            success=True,
-            message=result["message"],
-            voice_id=result.get("voice_id"),
-            question_id=result.get("question_id")
-        )
-    else:
-        raise HTTPException(status_code=400, detail=result["message"])
+    import time
+    import logging
+    
+    request_id = f"{username}_{int(time.time() * 1000)}"
+    start_time = time.time()
+    
+    logger = logging.getLogger(__name__)
+    
+    try:
+        logger.info(f"[POST /users/voices] START request_id={request_id}, username={username}, question_id={question_id}, filename={getattr(file, 'filename', 'N/A')}, content_type={getattr(file, 'content_type', 'N/A')}")
+        print(f"[POST /users/voices] START request_id={request_id}, username={username}, question_id={question_id}", flush=True)
+        
+        if not username:
+            logger.warning(f"[POST /users/voices] ERROR request_id={request_id}: username is required")
+            raise HTTPException(status_code=400, detail="username is required as query parameter")
+        
+        step_start = time.time()
+        voice_service = get_voice_service(db)
+        logger.info(f"[POST /users/voices] STEP2 get_voice_service request_id={request_id}, elapsed={time.time() - step_start:.3f}s")
+        
+        step_start = time.time()
+        result = await voice_service.upload_voice_with_question(file, username, question_id)
+        logger.info(f"[POST /users/voices] STEP3 upload_voice_with_question request_id={request_id}, elapsed={time.time() - step_start:.3f}s")
+        
+        if result["success"]:
+            total_elapsed = time.time() - start_time
+            logger.info(f"[POST /users/voices] SUCCESS request_id={request_id}, voice_id={result.get('voice_id')}, total_elapsed={total_elapsed:.3f}s")
+            print(f"[POST /users/voices] SUCCESS request_id={request_id}, voice_id={result.get('voice_id')}, total_elapsed={total_elapsed:.3f}s", flush=True)
+            return VoiceQuestionUploadResponse(
+                success=True,
+                message=result["message"],
+                voice_id=result.get("voice_id"),
+                question_id=result.get("question_id")
+            )
+        else:
+            total_elapsed = time.time() - start_time
+            logger.error(f"[POST /users/voices] FAILED request_id={request_id}, message={result.get('message')}, total_elapsed={total_elapsed:.3f}s")
+            raise HTTPException(status_code=400, detail=result["message"])
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        total_elapsed = time.time() - start_time
+        logger.error(f"[POST /users/voices] EXCEPTION request_id={request_id}, error={str(e)}, type={type(e).__name__}, total_elapsed={total_elapsed:.3f}s", exc_info=True)
+        print(f"[POST /users/voices] EXCEPTION request_id={request_id}, error={str(e)}, total_elapsed={total_elapsed:.3f}s", flush=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @users_router.get("/voices/analyzing/frequency", response_model=FrequencyAnalysisCombinedResponse)
 async def get_user_emotion_frequency(username: str, month: str, db: Session = Depends(get_db)):
     """사용자 본인의 월간 빈도 종합분석(OpenAI 캐시 + 기존 빈도 결과)"""
-    _verify_user_role(username, db)
     from .services.analysis_service import get_frequency_result
     try:
-        message = get_frequency_result(db, username=username, month=month, is_care=False)
+        message = get_frequency_result(db, username=username, is_care=False)
         voice_service = get_voice_service(db)
         base = voice_service.get_user_emotion_monthly_frequency(username, month)
         frequency = base.get("frequency", {}) if base.get("success") else {}
@@ -394,10 +499,9 @@ async def get_user_emotion_frequency(username: str, month: str, db: Session = De
 @users_router.get("/voices/analyzing/weekly", response_model=WeeklyAnalysisCombinedResponse)
 async def get_user_emotion_weekly(username: str, month: str, week: int, db: Session = Depends(get_db)):
     """사용자 본인의 주간 종합분석(OpenAI 캐시 사용)"""
-    _verify_user_role(username, db)
     from .services.analysis_service import get_weekly_result
     try:
-        message = get_weekly_result(db, username=username, month=month, week=week, is_care=False)
+        message = get_weekly_result(db, username=username, is_care=False)
         # 기존 주간 요약도 함께 제공
         voice_service = get_voice_service(db)
         weekly_result = voice_service.get_user_emotion_weekly_summary(username, month, week)
@@ -415,8 +519,11 @@ async def get_user_top_emotion(username: str, db: Session = Depends(get_db)):
     """사용자 본인의 그날의 대표 emotion 조회 (서버 현재 날짜 기준)"""
     from .services.top_emotion_service import get_top_emotion_for_date
     
-    # 사용자 검증 (USER 역할만 허용)
-    user = _verify_user_role(username, db)
+    # 사용자 검증
+    auth_service = get_auth_service(db)
+    user = auth_service.get_user_by_username(username)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
     
     # 서버 현재 날짜 사용
     today = datetime.now().date()
@@ -424,9 +531,6 @@ async def get_user_top_emotion(username: str, db: Session = Depends(get_db)):
     
     # 그날의 대표 emotion 조회
     top_emotion = get_top_emotion_for_date(db, user.user_id, date_str)
-    # fear -> anxiety 변환 (출력용)
-    if top_emotion == "fear":
-        top_emotion = "anxiety"
     
     return TopEmotionResponse(
         date=date_str,
@@ -441,8 +545,12 @@ async def register_fcm_token(
 ):
     """FCM 토큰 등록 (로그인 후 호출)"""
     
-    # 사용자 검증 (USER 역할만 허용)
-    user = _verify_user_role(username, db)
+    # 사용자 조회
+    auth_service = get_auth_service(db)
+    user = auth_service.get_user_by_username(username)
+    
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
     
     # FCM 토큰 등록
     from .repositories.fcm_repo import register_fcm_token
@@ -472,8 +580,12 @@ async def deactivate_fcm_token(
 ):
     """FCM 토큰 비활성화 (특정 기기 또는 전체)"""
     
-    # 사용자 검증 (USER 역할만 허용)
-    user = _verify_user_role(username, db)
+    # 사용자 조회
+    auth_service = get_auth_service(db)
+    user = auth_service.get_user_by_username(username)
+    
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
     
     from .repositories.fcm_repo import deactivate_fcm_tokens_by_user, deactivate_fcm_token_by_device
     
@@ -557,7 +669,7 @@ async def get_emotion_monthly_frequency(
     """보호자: 연결 유저의 월간 빈도 종합분석(OpenAI 캐시 + 기존 빈도 결과)"""
     from .services.analysis_service import get_frequency_result
     try:
-        message = get_frequency_result(db, username=care_username, month=month, is_care=True)
+        message = get_frequency_result(db, username=care_username, is_care=True)
         from .care_service import CareService
         care_service = CareService(db)
         base = care_service.get_emotion_monthly_frequency(care_username, month)
@@ -582,7 +694,7 @@ async def get_emotion_weekly_summary(
     """보호자: 연결 유저의 주간 종합분석(OpenAI 캐시 사용)"""
     from .services.analysis_service import get_weekly_result
     try:
-        message = get_weekly_result(db, username=care_username, month=month, week=week, is_care=True)
+        message = get_weekly_result(db, username=care_username, is_care=True)
         # 기존 주간 요약도 함께 제공
         care_service = CareService(db)
         weekly_result = care_service.get_emotion_weekly_summary(care_username, month, week)
@@ -623,7 +735,7 @@ async def get_care_notifications(care_username: str, db: Session = Depends(get_d
             "notification_id": n.notification_id,
             "voice_id": n.voice_id,
             "name": n.name,
-            "top_emotion": "anxiety" if n.top_emotion == "fear" else n.top_emotion,  # fear -> anxiety (출력용)
+            "top_emotion": n.top_emotion,
             "created_at": n.created_at.isoformat() if n.created_at else ""
         }
         for n in notifications
@@ -653,9 +765,6 @@ async def get_care_top_emotion(care_username: str, db: Session = Depends(get_db)
     
     # 그날의 대표 emotion 조회
     top_emotion = get_top_emotion_for_date(db, connected_user.user_id, date_str)
-    # fear -> anxiety 변환 (출력용)
-    if top_emotion == "fear":
-        top_emotion = "anxiety"
     
     return CareTopEmotionResponse(
         date=date_str,
@@ -703,9 +812,9 @@ async def get_care_voice_composite(voice_id: int, care_username: str, db: Sessio
         "sad_pct": pct(row.sad_bps),
         "neutral_pct": pct(row.neutral_bps),
         "angry_pct": pct(row.angry_bps),
-        "anxiety_pct": pct(row.fear_bps),  # fear -> anxiety (출력용)
+        "fear_pct": pct(row.fear_bps),
         "surprise_pct": pct(row.surprise_bps),
-        "top_emotion": "anxiety" if row.top_emotion == "fear" else row.top_emotion,  # fear -> anxiety
+        "top_emotion": row.top_emotion,
         "top_emotion_confidence_pct": pct(row.top_emotion_confidence_bps or 0),
     }
 
@@ -786,17 +895,13 @@ async def test_emotion_analyze(file: UploadFile = File(...)):
             )
         top_emotion = result.get("top_emotion") or result.get("label") or result.get("emotion")
         top_conf_bps = to_bps(result.get("top_confidence") or result.get("confidence", 0))
-        # top_emotion에서 fear -> anxiety 변환
-        if top_emotion == "fear":
-            top_emotion = "anxiety"
-        
         return VoiceAnalyzePreviewResponse(
             voice_id=None,
             happy_bps=happy,
             sad_bps=sad,
             neutral_bps=neutral,
             angry_bps=angry,
-            anxiety_bps=fear,  # fear -> anxiety (출력용)
+            fear_bps=fear,
             surprise_bps=surprise,
             top_emotion=top_emotion,
             top_confidence_bps=top_conf_bps,
@@ -866,131 +971,6 @@ async def test_fcm_send(
     svc = FcmService(db)
     result = svc.send_notification_to_tokens([token], title, body)
     return {"success": True, "result": result}
-
-
-@test_router.get("/voice/{voice_id}/fusion")
-async def test_emotion_fusion(voice_id: int, db: Session = Depends(get_db)):
-    """테스트: 새로운 감정 융합 알고리즘 계산 (Late Fusion 방식)
-    
-    새로운 계산식:
-    1. 텍스트 감정 점수 정규화: score = (score_bps - 5000) / 5000, magnitude = magnitude_x1000 / 1000
-    2. 텍스트 감정을 6개 감정으로 확장하는 가중치 계산
-    3. Late Fusion: α * audio_score + β * text_score (α=0.7, β=0.3)
-    4. top_emotion과 confidence 계산
-    """
-    from .repositories.voice_repo import get_audio_probs_by_voice_id, get_text_sentiment_by_voice_id
-    from .models import VoiceAnalyze, VoiceContent
-    
-    # 1. 데이터 조회
-    audio_probs = get_audio_probs_by_voice_id(db, voice_id)
-    text_score_raw, text_magnitude_raw = get_text_sentiment_by_voice_id(db, voice_id)
-    
-    # VoiceAnalyze와 VoiceContent 원본 데이터 확인
-    voice_analyze = db.query(VoiceAnalyze).filter(VoiceAnalyze.voice_id == voice_id).first()
-    voice_content = db.query(VoiceContent).filter(VoiceContent.voice_id == voice_id).first()
-    
-    if not voice_analyze:
-        raise HTTPException(status_code=404, detail=f"VoiceAnalyze not found for voice_id={voice_id}")
-    if not voice_content:
-        raise HTTPException(status_code=404, detail=f"VoiceContent not found for voice_id={voice_id}")
-    
-    # 2. 텍스트 감정 점수 정규화 (스케일 복구 규칙 적용)
-    score_bps = voice_content.score_bps if voice_content.score_bps is not None else 5000
-    magnitude_x1000 = voice_content.magnitude_x1000 if voice_content.magnitude_x1000 is not None else 0
-    
-    # 읽기 시: score = (score_bps / 10000) * 2 - 1  → [-1, 1]
-    score = (float(score_bps) / 10000.0) * 2.0 - 1.0
-    magnitude = float(magnitude_x1000) / 1000.0  # 원래 강도 단위 복원
-    
-    # Clamp score to [-1, 1]
-    score = max(-1.0, min(1.0, score))
-    magnitude = max(0.0, magnitude)
-    
-    # 3. 텍스트 감정을 6개 감정으로 확장하는 가중치 계산 (neutral 과대 비중 방지)
-    pos = max(0.0, score)
-    neg = max(0.0, -score)
-    mag = max(0.0, min(1.0, magnitude))
-    # 중립은 magnitude가 낮을 때만 비중 유지, 강도가 높을수록 감정으로 분배
-    neutral_base = (1.0 - abs(score)) * (1.0 - mag)
-    text_emotion_weight = {
-        "happy": pos * mag,
-        "sad": neg * mag,
-        "neutral": max(0.0, neutral_base),
-        "angry": neg * mag * 0.8,
-        "fear": neg * mag * 0.7,
-        "surprise": pos * mag * 0.8,
-    }
-    
-    # 텍스트 가중치 정규화 (0~1 범위로)
-    text_sum = sum(text_emotion_weight.values())
-    if text_sum > 0:
-        for k in text_emotion_weight:
-            text_emotion_weight[k] = text_emotion_weight[k] / text_sum
-    
-    # 4. Late Fusion: α * audio_score + β * text_score (원래 비중)
-    alpha = 0.7  # 오디오 비중
-    beta = 0.3   # 텍스트 비중
-    
-    emotions = ["happy", "sad", "neutral", "angry", "fear", "surprise"]
-    composite_score = {}
-    
-    for emotion in emotions:
-        audio_score = audio_probs.get(emotion, 0.0)
-        text_score = text_emotion_weight.get(emotion, 0.0)
-        composite_score[emotion] = alpha * audio_score + beta * text_score
-    
-    # 5. 대표 감정 결정
-    top_emotion = max(composite_score, key=composite_score.get)
-    top_confidence = composite_score[top_emotion]
-    top_confidence_bps = int(top_confidence * 10000)
-    
-    # 6. 감정별 수치를 bps로 변환
-    emotion_bps = {emotion: int(score * 10000) for emotion, score in composite_score.items()}
-    
-    # fear -> anxiety 변환 (출력용)
-    if top_emotion == "fear":
-        top_emotion_display = "anxiety"
-    else:
-        top_emotion_display = top_emotion
-    
-    emotion_bps_display = {}
-    for emotion, bps in emotion_bps.items():
-        key = "anxiety" if emotion == "fear" else emotion
-        emotion_bps_display[key] = bps
-    
-    return {
-        "voice_id": voice_id,
-        "input_data": {
-            "audio": {
-                "happy_bps": voice_analyze.happy_bps,
-                "sad_bps": voice_analyze.sad_bps,
-                "neutral_bps": voice_analyze.neutral_bps,
-                "angry_bps": voice_analyze.angry_bps,
-                "fear_bps": voice_analyze.fear_bps,
-                "surprise_bps": voice_analyze.surprise_bps,
-            },
-            "text": {
-                "score_bps": score_bps,
-                "magnitude_x1000": magnitude_x1000,
-                "score_normalized": score,
-                "magnitude_normalized": magnitude,
-            }
-        },
-        "intermediate": {
-            "audio_probs": {k: round(v, 4) for k, v in audio_probs.items()},
-            "text_emotion_weight": {k: round(v, 4) for k, v in text_emotion_weight.items()},
-        },
-        "fusion_params": {
-            "alpha": alpha,
-            "beta": beta,
-        },
-        "composite_score": {k: round(v, 4) for k, v in composite_score.items()},
-        "result": {
-            "top_emotion": top_emotion_display,
-            "top_confidence_bps": top_confidence_bps,
-            "emotion_bps": emotion_bps_display,
-        }
-    }
 
 # ---------------- router 등록 ----------------
 app.include_router(users_router)
