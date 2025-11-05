@@ -21,6 +21,7 @@ def _send_fcm_notification_background(voice_id: int, care_user_id: int, user_nam
             # 알림 제목 및 내용
             title = "마음일기가 도착했어요!"
             body = f"지금 {user_name} 님이 마음일기를 남겼으니 확인해보세요!"
+
             
             # 알림 데이터 (앱에서 음성 상세 페이지로 이동할 수 있도록)
             data = {
