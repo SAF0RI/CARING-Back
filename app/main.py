@@ -488,7 +488,7 @@ async def get_user_emotion_frequency(username: str, month: str, db: Session = De
     """사용자 본인의 월간 빈도 종합분석(OpenAI 캐시 + 기존 빈도 결과)"""
     from .services.analysis_service import get_frequency_result
     try:
-        message = get_frequency_result(db, username=username, is_care=False)
+        message = get_frequency_result(db, username=username, month=month, is_care=False)
         voice_service = get_voice_service(db)
         base = voice_service.get_user_emotion_monthly_frequency(username, month)
         frequency = base.get("frequency", {}) if base.get("success") else {}
@@ -501,7 +501,7 @@ async def get_user_emotion_weekly(username: str, month: str, week: int, db: Sess
     """사용자 본인의 주간 종합분석(OpenAI 캐시 사용)"""
     from .services.analysis_service import get_weekly_result
     try:
-        message = get_weekly_result(db, username=username, is_care=False)
+        message = get_weekly_result(db, username=username, month=month, week=week, is_care=False)
         # 기존 주간 요약도 함께 제공
         voice_service = get_voice_service(db)
         weekly_result = voice_service.get_user_emotion_weekly_summary(username, month, week)
@@ -669,7 +669,7 @@ async def get_emotion_monthly_frequency(
     """보호자: 연결 유저의 월간 빈도 종합분석(OpenAI 캐시 + 기존 빈도 결과)"""
     from .services.analysis_service import get_frequency_result
     try:
-        message = get_frequency_result(db, username=care_username, is_care=True)
+        message = get_frequency_result(db, username=care_username, month=month, is_care=True)
         from .care_service import CareService
         care_service = CareService(db)
         base = care_service.get_emotion_monthly_frequency(care_username, month)
@@ -694,7 +694,7 @@ async def get_emotion_weekly_summary(
     """보호자: 연결 유저의 주간 종합분석(OpenAI 캐시 사용)"""
     from .services.analysis_service import get_weekly_result
     try:
-        message = get_weekly_result(db, username=care_username, is_care=True)
+        message = get_weekly_result(db, username=care_username, month=month, week=week, is_care=True)
         # 기존 주간 요약도 함께 제공
         care_service = CareService(db)
         weekly_result = care_service.get_emotion_weekly_summary(care_username, month, week)
