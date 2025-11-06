@@ -406,15 +406,25 @@ async def get_user_voice_list(
     date: Optional[str] = None,  # YYYY-MM-DD 형식, Optional
     db: Session = Depends(get_db)
 ):
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    request_id = f"{username}_{int(time.time() * 1000)}"
+    logger.info(f"[GET /users/voices] START request_id={request_id}, username={username}, date={date}")
+    print(f"[GET /users/voices] START request_id={request_id}, username={username}, date={date}", flush=True)
+    
     # 날짜 형식 검증 (있을 경우만)
     if date:
         try:
             datetime.strptime(date, "%Y-%m-%d")
         except ValueError:
+            logger.warning(f"[GET /users/voices] ERROR request_id={request_id}: Invalid date format. date={date}")
             raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
 
     voice_service = get_voice_service(db)
     result = voice_service.get_user_voice_list(username, date=date)
+    
+    logger.info(f"[GET /users/voices] SUCCESS request_id={request_id}, voices_count={len(result.get('voices', []))}")
     return UserVoiceListResponse(success=result["success"], voices=result.get("voices", []))
 
 @users_router.get("/voices/{voice_id}", response_model=UserVoiceDetailResponse)
