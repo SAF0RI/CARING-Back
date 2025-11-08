@@ -183,18 +183,29 @@ class VoiceService:
                     "message": "User not found"
                 }
             
-            # 2. 파일 확장자 검증
-            if not (file.filename.endswith('.wav') or file.filename.endswith('.m4a')):
+            # 2. 파일 확장자/콘텐츠 타입 검증(완화)
+            content_type = getattr(file, "content_type", "") or ""
+            filename = file.filename or "upload"
+            lower_name = filename.lower()
+            allowed_ext = (lower_name.endswith('.wav') or lower_name.endswith('.m4a'))
+            allowed_ct = any(ct in content_type for ct in ("audio/wav", "audio/x-wav", "audio/m4a", "audio/x-m4a", "audio/mp4"))
+            if not (allowed_ext or allowed_ct):
                 return {
                     "success": False,
-                    "message": "Only .wav and .m4a files are allowed"
+                    "message": "Only wav/m4a audio is allowed"
                 }
+            # 확장자 미포함/이상치인 경우 Content-Type 기반으로 보정
+            if not '.' in filename or (not lower_name.endswith('.wav') and not lower_name.endswith('.m4a')):
+                if "m4a" in content_type or "mp4" in content_type:
+                    filename = (filename.rsplit('.', 1)[0] if '.' in filename else filename) + ".m4a"
+                else:
+                    filename = (filename.rsplit('.', 1)[0] if '.' in filename else filename) + ".wav"
             
             # 3. 파일 읽기 및 WAV 변환 (비동기로 처리하여 블로킹 방지)
             file_content = await file.read()
             # CPU 집약적 작업을 스레드 풀에서 실행
             wav_content, wav_filename = await asyncio.to_thread(
-                self._convert_to_wav, file_content, file.filename
+                self._convert_to_wav, file_content, filename
             )
             logger.log_step("파일변환 완료")
             
@@ -718,18 +729,29 @@ class VoiceService:
                     "message": "Question not found"
                 }
             
-            # 3. 파일 확장자 검증
-            if not (file.filename.endswith('.wav') or file.filename.endswith('.m4a')):
+            # 3. 파일 확장자/콘텐츠 타입 검증(완화)
+            content_type = getattr(file, "content_type", "") or ""
+            filename = file.filename or "upload"
+            lower_name = filename.lower()
+            allowed_ext = (lower_name.endswith('.wav') or lower_name.endswith('.m4a'))
+            allowed_ct = any(ct in content_type for ct in ("audio/wav", "audio/x-wav", "audio/m4a", "audio/x-m4a", "audio/mp4"))
+            if not (allowed_ext or allowed_ct):
                 return {
                     "success": False,
-                    "message": "Only .wav and .m4a files are allowed"
+                    "message": "Only wav/m4a audio is allowed"
                 }
+            # 확장자 미포함/이상치인 경우 Content-Type 기반으로 보정
+            if not '.' in filename or (not lower_name.endswith('.wav') and not lower_name.endswith('.m4a')):
+                if "m4a" in content_type or "mp4" in content_type:
+                    filename = (filename.rsplit('.', 1)[0] if '.' in filename else filename) + ".m4a"
+                else:
+                    filename = (filename.rsplit('.', 1)[0] if '.' in filename else filename) + ".wav"
             
             # 4. 파일 읽기 및 WAV 변환 (비동기로 처리하여 블로킹 방지)
             file_content = await file.read()
             # CPU 집약적 작업을 스레드 풀에서 실행
             wav_content, wav_filename = await asyncio.to_thread(
-                self._convert_to_wav, file_content, file.filename
+                self._convert_to_wav, file_content, filename
             )
             logger.log_step("파일변환 완료")
             
